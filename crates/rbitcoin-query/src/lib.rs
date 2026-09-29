@@ -561,7 +561,17 @@ impl Query {
         base_through_prev: Option<bitcoin::Work>,
     ) {
         let mut g = self.milestone_path_lock();
-        g.by_height.insert(height, hash);
+        if let Some(existing) = g.by_height.get(&height).copied() {
+            if existing != hash {
+                return;
+            }
+            // Re-noting an ancestor must not rewind work already accumulated above it.
+            if g.work_valid && g.work_height > height {
+                return;
+            }
+        } else {
+            g.by_height.insert(height, hash);
+        }
         if let Some(base) = base_through_prev {
             if !g.work_valid || height >= g.work_height {
                 let acc = base + header_work;

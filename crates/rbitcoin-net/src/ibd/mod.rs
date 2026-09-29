@@ -22,6 +22,7 @@ mod confirm;
 mod dial;
 mod events;
 mod exit;
+mod header_scan;
 mod path;
 mod peer_io;
 mod perf_log;
@@ -379,14 +380,8 @@ pub async fn ibd_cancellable(
     st.addr_cooldown = boot_cooldown;
     st.addr_strikes = boot_strikes;
     seed_work_path_from_store(&mut st, hub.as_ref());
-
-    // Channel may close if handshake races the first getheaders.
-    for _ in 0..st.slots.len().min(4) {
-        let tips = work_path_tips(&st);
-        if request_headers(&st.slots, &hub, &mut st.header_req_seq, &tips).unwrap_or(false) {
-            break;
-        }
-    }
+    header_scan::restore(&mut st, hub.as_ref());
+    header_scan::poll(&mut st, hub.as_ref(), Instant::now());
 
     let loop_stats = Arc::new(LoopStats::default());
     let store_class_a_bodies = hub.query.archived_block_count().unwrap_or(0);
@@ -598,7 +593,10 @@ pub async fn ibd_cancellable(
             if should_unlatch_headers_done(&st, hub.tip_height().unwrap_or(0)) {
                 st.headers_done = false;
             }
-            if !st.headers_done && under_hard && (under_soft || need_ready_headroom) {
+            header_scan::admit(&mut st, hub.as_ref());
+            if !st.header_scan.done {
+                header_scan::poll(&mut st, hub.as_ref(), now_cadence);
+            } else if !st.headers_done && under_hard && (under_soft || need_ready_headroom) {
                 let tip_h = hub.tip_height().unwrap_or(0);
                 let lag = header_lag_behind_peers(&st, tip_h);
                 let min_cache = window.saturating_mul(8).max(4096);
@@ -862,6 +860,7 @@ pub async fn ibd_cancellable(
                 bq_soft_stop,
             });
             info_bold!("{progress_line}");
+            header_scan::log_progress(&st, hub.as_ref());
             let _ = std::io::Write::flush(&mut std::io::stderr());
 
             last_sample_tip = prog.tip;

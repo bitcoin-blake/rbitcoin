@@ -213,6 +213,32 @@ fn try_enqueue_ordered_header(
     false
 }
 
+/// Admit one already-validated header into the body window.
+///
+/// The ordered path stops at [`ORDERED_HEADERS_SOFT_CAP`]. Headers past that
+/// stay on the milestone path and in Class A until the window has room.
+pub(crate) fn enqueue_scanned_header(
+    st: &mut IbdWorkState,
+    hub: &ChainHub,
+    hash: BlockHash,
+    prev: BlockHash,
+    height: u32,
+) -> bool {
+    if st.ordered.len() >= ORDERED_HEADERS_SOFT_CAP {
+        return false;
+    }
+    let tip = hub.tip_height().zip(hub.tip_hash());
+    if !st.try_set_path_slot(hash, height, prev, tip) {
+        return false;
+    }
+    if try_enqueue_ordered_header(st, hub, hash, prev) {
+        st.max_ordered_height = st.max_ordered_height.max(height);
+        true
+    } else {
+        false
+    }
+}
+
 /// After the full batch fails, probe one header before searching.
 ///
 /// A rejected first header means no longer prefix can be stored.
@@ -428,6 +454,10 @@ fn apply_headers_event(
     peer: usize,
     headers: Vec<bitcoin::block::Header>,
 ) {
+    let headers = match super::header_scan::take_headers(st, hub, peer, headers, Instant::now()) {
+        None => return,
+        Some(headers) => headers,
+    };
     let batch_len = headers.len();
     let added = on_headers_batch(st, hub, headers);
     if added > 0 {
@@ -598,6 +628,7 @@ fn apply_peer_dead(st: &mut IbdWorkState, peer_book: &mut AddrMan, peer: usize, 
     }
     let freed = release_peer_block_work(&mut st.slots, &mut st.inflight, &mut st.body, peer);
     st.reopen_for_densify(&freed);
+    super::header_scan::on_peer_dead(st, peer);
 }
 
 /// Grow the IBD dial book from peer-advertised addresses (getaddr responses).

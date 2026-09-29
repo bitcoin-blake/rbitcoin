@@ -10,6 +10,7 @@
 
 use super::assign_plan::compact_ordered;
 use super::body::{BodyPresence, BodyPresenceSizes};
+use super::header_scan::HeaderScan;
 use super::reorg::IbdReorgState;
 use bitcoin::BlockHash;
 use rbitcoin_primitives::Fk;
@@ -180,6 +181,8 @@ pub(crate) struct IbdWorkState {
     pub(crate) intake_stop: u64,
     /// Body-queue bytes snapshotted with [`Self::intake_stop`].
     pub(crate) intake_queued: u64,
+    /// Header chain ahead of the body window (two-peer adopt).
+    pub header_scan: HeaderScan,
 }
 
 impl IbdWorkState {
@@ -238,6 +241,7 @@ impl IbdWorkState {
             cascade_at: None,
             intake_stop: u64::MAX,
             intake_queued: 0,
+            header_scan: HeaderScan::default(),
         }
     }
 

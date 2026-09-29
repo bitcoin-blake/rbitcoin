@@ -385,6 +385,8 @@ Open-address hash head (see [Hash heads](#hash-heads-headerhead--generic)): key 
 
 **Open:** leftover `header.head/` directory (old 256-way shards) is **Layout refuse** (wipe `header.head` and `header.body`, reindex). A **single** file smaller than the create target is rewritten on open at the target slot count: write `header.head.grow`, fsync, rename over the live file (`.mlt` kept; no concurrent probes). Crash during rewrite leaves the previous undersized file. A target-sized gen0 with `occupied==0` and a non-empty `header.body` or `.mlt` is **Layout refuse** (wipe `header.head`, `header.head.mlt`, and `header.body`, reindex) — not a silent empty index.
 
+**Resume cursor:** `header.adopt` (magic `rbtchdr1`, height `u32` LE, hash, work). Optional. On open, if that hash is still in `header.body`, the milestone map is refilled by walking `prev_fk` to the confirmed tip and work is restored from the walk. A missing file, a hash that is not in `header.body`, or a walk that does not meet the confirmed tip is ignored and header sync runs again. It is not a height-only skip and it is not a schema bump.
+
 ---
 
 ## Class A — transactions

@@ -962,6 +962,13 @@ fn buried_rules_and_a_lying_header_path() {
     q.note_milestone_header(10, h10, [0x66; 32], one, None);
     let at_ten = (bigger + one + one).to_be_bytes();
     assert_eq!(q.milestone_best_work_be(), Some(at_ten));
+    q.note_milestone_header(10, [0x99; 32], [0x66; 32], one, None);
+    assert_eq!(
+        q.milestone_header_at(10),
+        Some(h10),
+        "a second hash at the same height does not replace the adopted path"
+    );
+    assert_eq!(q.milestone_best_work_be(), Some(at_ten));
     q.note_milestone_header(11, [0x44; 32], [0x55; 32], one, None);
     assert_eq!(
         q.milestone_best_work_be(),

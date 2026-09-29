@@ -679,6 +679,10 @@ pub(crate) fn issue_batch(
     if batch.is_empty() {
         return false;
     }
+    // A peer answering getheaders is not also a block source for this window.
+    if super::header_scan::peer_awaits_headers(st, pid) {
+        return false;
+    }
     let Some(idx) = st.slots.iter().position(|s| s.id == pid && s.alive) else {
         return false;
     };
