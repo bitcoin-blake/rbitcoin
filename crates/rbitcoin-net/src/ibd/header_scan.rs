@@ -824,86 +824,117 @@ impl Cursor {
     }
 }
 
-/// Walk `header.body` from the cursor back to the confirmed tip and refill the
-/// milestone map. False when the file does not match the store.
-fn replay_cursor(hub: &ChainHub, cursor: &Cursor) -> bool {
-    let tip_h = hub.tip_height().unwrap_or(0);
-    if cursor.height < tip_h {
-        return false;
+fn stored_header(hub: &ChainHub, hash: &[u8; 32]) -> Option<rbitcoin_store::HeaderRecord> {
+    match hub.query.get_header_by_hash(hash) {
+        Ok(Some((_, rec))) if rec.hash == *hash => Some(rec),
+        _ => None,
     }
-    let Ok(Some((_, rec))) = hub.query.get_header_by_hash(&cursor.hash) else {
+}
+
+fn parent_hash(hub: &ChainHub, rec: &rbitcoin_store::HeaderRecord) -> Option<[u8; 32]> {
+    if rec.prev_fk.is_null() {
+        return Some([0u8; 32]);
+    }
+    hub.query
+        .store()
+        .get_header(rec.prev_fk)
+        .ok()
+        .map(|p| p.hash)
+}
+
+/// The cursor names the confirmed tip. Restore its work and do not walk.
+fn replay_at_tip(hub: &ChainHub, cursor: &Cursor, tip_h: u32) -> bool {
+    let Some(tip) = hub.tip_hash() else {
         return false;
     };
-    if rec.hash != cursor.hash {
+    if tip.to_byte_array() != cursor.hash {
         return false;
     }
-    if cursor.height == tip_h {
-        let Some(tip) = hub.tip_hash() else {
-            return false;
-        };
-        if tip.to_byte_array() != cursor.hash {
-            return false;
-        }
-        hub.query.note_milestone_header(
-            tip_h,
-            cursor.hash,
-            [0u8; 32],
-            bitcoin::Work::from_be_bytes([0u8; 32]),
-            Some(bitcoin::Work::from_be_bytes(cursor.work)),
-        );
-        return hub.query.milestone_best_work_be() == Some(cursor.work);
-    }
-    let mut chain: Vec<(u32, [u8; 32], [u8; 32], bitcoin::Work)> = Vec::new();
+    hub.query.note_milestone_header(
+        tip_h,
+        cursor.hash,
+        [0u8; 32],
+        bitcoin::Work::from_be_bytes([0u8; 32]),
+        Some(bitcoin::Work::from_be_bytes(cursor.work)),
+    );
+    hub.query.milestone_best_work_be() == Some(cursor.work)
+}
+
+struct WalkedHeader {
+    height: u32,
+    hash: [u8; 32],
+    prev: [u8; 32],
+    work: bitcoin::Work,
+}
+
+/// Headers strictly above the confirmed tip, low height first.
+fn walk_above_tip(hub: &ChainHub, cursor: &Cursor, tip_h: u32) -> Option<Vec<WalkedHeader>> {
+    let mut chain = Vec::new();
     let mut hash = cursor.hash;
     let mut height = cursor.height;
     while height > tip_h {
-        let Ok(Some((_, rec))) = hub.query.get_header_by_hash(&hash) else {
-            return false;
-        };
-        if rec.hash != hash {
-            return false;
-        }
-        let prev_hash = if rec.prev_fk.is_null() {
-            [0u8; 32]
-        } else {
-            match hub.query.store().get_header(rec.prev_fk) {
-                Ok(parent) => parent.hash,
-                Err(_) => return false,
-            }
-        };
-        let hdr = header_from_record(&rec, prev_hash);
-        chain.push((height, rec.hash, prev_hash, hdr.work()));
+        let rec = stored_header(hub, &hash)?;
+        let prev = parent_hash(hub, &rec)?;
+        let hdr = header_from_record(&rec, prev);
+        chain.push(WalkedHeader {
+            height,
+            hash: rec.hash,
+            prev,
+            work: hdr.work(),
+        });
         if height == 0 {
             break;
         }
-        hash = prev_hash;
+        hash = prev;
         height -= 1;
     }
     if height != tip_h {
-        return false;
+        return None;
     }
-    if let Some(tip) = hub.tip_hash() {
-        if hash != tip.to_byte_array() && cursor.height != tip_h {
-            return false;
-        }
+    if hub
+        .tip_hash()
+        .is_some_and(|tip| hash != tip.to_byte_array())
+    {
+        return None;
     }
     chain.reverse();
+    Some(chain)
+}
+
+fn note_walked(hub: &ChainHub, chain: Vec<WalkedHeader>, tip_h: u32, want: [u8; 32]) -> bool {
     let mut first = true;
-    for (h, hh, prev, work) in chain {
+    for row in chain {
         let base = if first {
             first = false;
             hub.chain_work().ok()
         } else {
             None
         };
-        hub.query.note_milestone_header(h, hh, prev, work, base);
+        hub.query
+            .note_milestone_header(row.height, row.hash, row.prev, row.work, base);
     }
     let got = hub.query.milestone_best_work_be().unwrap_or([0u8; 32]);
-    if got != cursor.work {
+    if got != want {
         hub.query.clear_milestone_path_above(tip_h);
         return false;
     }
     true
+}
+
+/// Walk `header.body` from the cursor back to the confirmed tip and refill the
+/// milestone map. False when the file does not match the store.
+fn replay_cursor(hub: &ChainHub, cursor: &Cursor) -> bool {
+    let tip_h = hub.tip_height().unwrap_or(0);
+    if cursor.height < tip_h || stored_header(hub, &cursor.hash).is_none() {
+        return false;
+    }
+    if cursor.height == tip_h {
+        return replay_at_tip(hub, cursor, tip_h);
+    }
+    let Some(chain) = walk_above_tip(hub, cursor, tip_h) else {
+        return false;
+    };
+    note_walked(hub, chain, tip_h, cursor.work)
 }
 
 fn header_from_record(rec: &rbitcoin_store::HeaderRecord, prev_hash: [u8; 32]) -> Header {
