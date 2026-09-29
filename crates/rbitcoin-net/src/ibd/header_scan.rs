@@ -105,6 +105,23 @@ pub(crate) fn peer_awaits_headers(st: &IbdWorkState, pid: usize) -> bool {
     st.header_scan.outstanding() == Some(pid)
 }
 
+/// The scan owns `getheaders` while a witnessed window is in flight or two
+/// peers can serve one. One live peer keeps the body-window fetch.
+pub(crate) fn blocks_body_fetch(st: &IbdWorkState) -> bool {
+    if st.header_scan.done {
+        return false;
+    }
+    if !matches!(st.header_scan.phase, Phase::Idle) {
+        return true;
+    }
+    eligible_header_peers(st, Instant::now()) >= 2
+}
+
+/// One peer's body-window headers must not open the milestone gate.
+pub(crate) fn owns_milestone(st: &IbdWorkState) -> bool {
+    st.header_scan.engaged && !st.header_scan.done
+}
+
 /// The outstanding header peer died. A held primary batch stays until a witness answers.
 pub(crate) fn on_peer_dead(st: &mut IbdWorkState, peer: usize) {
     if st.header_scan.done {
@@ -172,13 +189,22 @@ pub(crate) fn take_headers(
     if !st.header_scan.engaged || st.header_scan.done {
         return Some(headers);
     }
-    // One peer's unsolicited batch does not move the adopted tip.
+    // A batch that is not the in-flight witnessed window does not move the
+    // adopted tip. The body window still accepts it when the scan is not the
+    // one asking (a lone peer, or every other peer is cooling).
     if !expects(st, peer) {
-        return None;
+        if blocks_body_fetch(st) {
+            return None;
+        }
+        return Some(headers);
     }
     let phase = std::mem::replace(&mut st.header_scan.phase, Phase::Idle);
     match phase {
         Phase::Primary { peer: want, .. } if want == peer => {
+            if release_to_body(st, hub, peer, &headers, now) {
+                note_served(st, peer);
+                return Some(headers);
+            }
             on_primary(st, hub, peer, headers, now);
             None
         }
@@ -345,6 +371,11 @@ pub(crate) fn poll(st: &mut IbdWorkState, hub: &ChainHub, now: Instant) {
         }
         st.header_scan.phase = Phase::Idle;
     }
+    // A lone peer cannot witness the milestone path. Leave getheaders to the
+    // body window so IBD still connects.
+    if matches!(st.header_scan.phase, Phase::Idle) && eligible_header_peers(st, now) < 2 {
+        return;
+    }
     match &st.header_scan.phase {
         Phase::Idle => ask_primary(st, hub, now),
         Phase::Witness { witness: None, .. } => ask_witness(st, hub, now),
@@ -445,21 +476,59 @@ fn ask_witness(st: &mut IbdWorkState, hub: &ChainHub, now: Instant) {
     }
 }
 
+fn peer_can_serve_headers(st: &IbdWorkState, id: usize, now: Instant) -> bool {
+    let Some(s) = st.slots.iter().find(|s| s.id == id) else {
+        return false;
+    };
+    s.alive
+        && s.in_flight.is_empty()
+        && st.header_scan.outstanding() != Some(id)
+        && st
+            .header_scan
+            .cooldown
+            .get(&id)
+            .is_none_or(|until| *until <= now)
+}
+
+fn eligible_header_peers(st: &IbdWorkState, now: Instant) -> usize {
+    st.slots
+        .iter()
+        .filter(|s| peer_can_serve_headers(st, s.id, now))
+        .count()
+}
+
+/// No second peer can confirm this batch. The body window may still take it.
+fn release_to_body(
+    st: &IbdWorkState,
+    hub: &ChainHub,
+    peer: usize,
+    headers: &[Header],
+    now: Instant,
+) -> bool {
+    // A peer busy with blocks can still witness once those blocks drain.
+    // Only a missing or cooling peer releases this batch to the body window.
+    let other = st.slots.iter().any(|s| {
+        s.id != peer
+            && s.alive
+            && st
+                .header_scan
+                .cooldown
+                .get(&s.id)
+                .is_none_or(|until| *until <= now)
+    });
+    if other {
+        return false;
+    }
+    if headers.is_empty() {
+        return st.header_scan.adopted_height <= hub.tip_height().unwrap_or(0);
+    }
+    extends_adopted(st, hub, headers)
+}
+
 fn pick_peer(st: &IbdWorkState, now: Instant, skip: &[usize]) -> Option<usize> {
     let mut best: Option<(u32, usize)> = None;
     for s in &st.slots {
-        if !s.alive || !s.in_flight.is_empty() || skip.contains(&s.id) {
-            continue;
-        }
-        if st.header_scan.outstanding() == Some(s.id) {
-            continue;
-        }
-        if st
-            .header_scan
-            .cooldown
-            .get(&s.id)
-            .is_some_and(|until| *until > now)
-        {
+        if skip.contains(&s.id) || !peer_can_serve_headers(st, s.id, now) {
             continue;
         }
         let n = st.header_scan.served.get(&s.id).copied().unwrap_or(0);
@@ -921,6 +990,40 @@ mod tests {
 
     fn saw_getheaders(rx: &mut mpsc::UnboundedReceiver<PeerCmd>) -> bool {
         matches!(rx.try_recv(), Ok(PeerCmd::GetHeaders { .. }))
+    }
+
+    #[test]
+    fn one_live_peer_keeps_the_body_window_and_does_not_adopt() {
+        let (_dir, hub) = hub();
+        let gen = hub.tip_hash().unwrap();
+        let good = mine(gen, 1_600_000_000);
+        let (s0, mut rx0) = slot(0);
+        let mut st = IbdWorkState::new(vec![s0], Some(gen), Some(0));
+        let now = Instant::now();
+        assert!(!blocks_body_fetch(&st));
+        poll(&mut st, &hub, now);
+        assert!(
+            !saw_getheaders(&mut rx0),
+            "one live peer is not asked by the two-peer scan"
+        );
+        assert!(!blocks_body_fetch(&st));
+        let body = take_headers(&mut st, &hub, 0, vec![good], now);
+        assert!(
+            body.is_some(),
+            "a lone peer's reply still fills the body window"
+        );
+        assert!(hub.query.milestone_header_at(1).is_none());
+        st.header_scan.phase = Phase::Primary {
+            peer: 0,
+            since: now,
+        };
+        let released = take_headers(&mut st, &hub, 0, vec![good], now);
+        assert!(released.is_some(), "the batch returns to the body window");
+        assert!(
+            hub.query.milestone_header_at(1).is_none(),
+            "one peer does not move the milestone path"
+        );
+        assert!(owns_milestone(&st));
     }
 
     #[test]
