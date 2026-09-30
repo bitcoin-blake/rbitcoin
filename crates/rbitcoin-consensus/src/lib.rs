@@ -412,6 +412,7 @@ mod coverage_tests {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata,
         };

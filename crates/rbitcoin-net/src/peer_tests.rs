@@ -195,6 +195,7 @@ fn should_poll_peer_headers_skips_behind_and_weaker_fork() {
         time: 1_300_000_000,
         bits: bitcoin::CompactTarget::from_consensus(0x207f_ffff),
         nonce: 99,
+        v2: None,
     };
     rbitcoin_consensus::grind_regtest_pow(&mut fork);
     hub.ensure_header(&fork).unwrap();
@@ -332,6 +333,7 @@ fn cmpct_helpers_without_mempool_and_queue_out_closed() {
             time: tip_block.header.time + 600,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase, junk],
     };
@@ -579,6 +581,7 @@ fn same_peer_pending_cmpct_does_not_getblocktxn_again() {
                 time: 1,
                 bits: CompactTarget::from_consensus(0x207f_ffff),
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase, spend],
         };
@@ -768,6 +771,7 @@ fn handle_peer_frame_control_and_inv_paths() {
             time: gen.time + 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 1,
+            v2: None,
         };
         handle_peer_frame(
             frame_for(NetworkMessage::Headers(vec![child])),
@@ -1474,6 +1478,7 @@ fn cmpct_helpers_with_mempool_skip_list_live() {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![
             Transaction {
@@ -1680,6 +1685,7 @@ fn p2p_side_chain_reorgs_via_held_bodies() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(height)],
         };

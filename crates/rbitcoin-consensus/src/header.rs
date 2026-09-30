@@ -631,6 +631,7 @@ mod median_time_past_tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         let check = |params: &ChainParams, height: u32, time: u32| {
             validate_header_on_parent(

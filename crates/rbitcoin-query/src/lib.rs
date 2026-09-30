@@ -2349,6 +2349,7 @@ fn wire_header(rec: &HeaderRecord, prev_blockhash: BlockHash) -> BlockHeader {
         time: rec.timestamp,
         bits: CompactTarget::from_consensus(rec.bits),
         nonce: rec.nonce,
+        v2: None,
     }
 }
 

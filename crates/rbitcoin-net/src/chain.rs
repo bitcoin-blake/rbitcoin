@@ -1165,6 +1165,7 @@ impl ChainHub {
             time: rec.timestamp,
             bits: bitcoin::CompactTarget::from_consensus(rec.bits),
             nonce: rec.nonce,
+            v2: None,
         })
     }
 
@@ -3512,6 +3513,7 @@ mod tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         let mut block = Block {
             header,
@@ -4853,6 +4855,7 @@ mod tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         let mut txdata = vec![coinbase(height)];
         txdata.extend(extra);

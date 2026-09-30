@@ -1139,6 +1139,7 @@ fn confirm_txstat_miss_is_corrupt() {
             time: 2,
             bits: bitcoin::CompactTarget::from_consensus(0x207fffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![spend],
     });
@@ -1221,6 +1222,7 @@ fn archive_plan_fee_rows_follow_packed_txs() {
             time: 2,
             bits: bitcoin::CompactTarget::from_consensus(0x207fffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![spend],
     });

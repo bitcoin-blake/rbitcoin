@@ -501,6 +501,7 @@ mod tests {
             time: 1,
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: 0,
+            v2: None,
         }
     }
 

@@ -478,6 +478,7 @@ fn job_tx_traits_and_shared_mut_panic() {
         time: 1,
         bits: CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     };
     let block = Arc::new(Block {
         header,

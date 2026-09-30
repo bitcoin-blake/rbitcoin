@@ -179,6 +179,7 @@ fn tip_announce_headers_versus_inv(hub: &crate::chain::ChainHub) {
         time: 1,
         bits: CompactTarget::from_consensus(0x207f_ffff),
         nonce: 1,
+        v2: None,
     };
     let ev = crate::chain::TipEvent {
         height: 1,
@@ -680,6 +681,7 @@ async fn tip_announce_blocktxn_feeds_extra(hub: &crate::chain::ChainHub) {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase.clone(), spend.clone()],
     };

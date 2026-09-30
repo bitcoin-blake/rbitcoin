@@ -45,6 +45,8 @@ pub(crate) fn outbound_queued_bytes(out: &PeerOut) -> usize {
 
 /// Session writer payload: application messages or pre-encoded v2 block bytes.
 #[derive(Debug)]
+// `NetworkMessage` carries v2 headers inline; boxing every message adds an allocation.
+#[allow(clippy::large_enum_variant)]
 pub enum PeerOut {
     Msg(NetworkMessage),
     Encoded(Vec<u8>),

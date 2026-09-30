@@ -45,6 +45,7 @@ fn proposal_on_tip(ctx: &RpcContext, extra: Vec<Transaction>) -> Block {
             time: mined.header.time.saturating_add(1),
             bits: mined.header.bits,
             nonce: 0,
+            v2: None,
         },
         txdata,
     };
@@ -224,6 +225,7 @@ fn chain_ops_refusals_at_genesis(ctx: &RpcContext, hub: &rbitcoin_net::ChainHub)
         time: 1,
         bits: bitcoin::CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     });
     let e = dispatch(ctx, "submitheader", vec![json!(hex_encode(orphan))]).unwrap_err();
     assert_eq!(e["code"], ERR_VERIFY_ERROR);
@@ -940,6 +942,7 @@ fn chain_ops_big_sigops_cluster(ctx: &RpcContext, cbs: &mut TrueCoinbases) {
                 u32::from_str_radix(tmpl["bits"].as_str().unwrap(), 16).unwrap(),
             ),
             nonce: 0,
+            v2: None,
         },
         txdata,
     };

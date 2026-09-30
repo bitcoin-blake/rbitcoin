@@ -4153,6 +4153,8 @@ enum TipAnnounce {
 }
 
 #[derive(Debug)]
+// A v2 header makes `TipEvent` 200+ bytes; one announce per tip is not worth a Box.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TipRecvAnnounce {
     Announce(crate::chain::TipEvent),
     Skip,

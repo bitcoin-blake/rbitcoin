@@ -417,6 +417,7 @@ mod tests {
                     time,
                     bits: CompactTarget::from_consensus(0x207f_ffff),
                     nonce: 0,
+                    v2: None,
                 },
                 txdata: vec![coinbase],
             };
@@ -573,6 +574,7 @@ mod tests {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             };
             let mut block = Block {
                 header,
@@ -670,6 +672,7 @@ mod tests {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             };
             let mut block = Block {
                 header,

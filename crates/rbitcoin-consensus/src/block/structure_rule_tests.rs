@@ -99,6 +99,7 @@ fn block_with(txs: Vec<Transaction>) -> Block {
             time: 1_290_000_000,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: txs,
     };
@@ -1266,6 +1267,7 @@ fn optimistic_assemble_unstamped_parent_is_invariant() {
             time: genesis.header.time + 600,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase(1), spend],
     };
@@ -1688,6 +1690,7 @@ fn n1_assemble_cold_why_reasons() {
                 time: tip_time + 600,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(h)],
         };
@@ -1916,6 +1919,7 @@ fn already_archived_schema13_pin_identity_tip_follow() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(h)],
         };
@@ -1941,6 +1945,7 @@ fn already_archived_schema13_pin_identity_tip_follow() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: txs,
         };

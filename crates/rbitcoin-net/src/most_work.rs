@@ -116,6 +116,7 @@ mod tests {
             time: 0,
             bits: bitcoin::CompactTarget::from_consensus(0),
             nonce: 0,
+            v2: None,
         };
         assert!(header_work_checked(&zero_bits).is_err());
         zero_bits.bits = bitcoin::CompactTarget::from_consensus(0x207f_ffff);

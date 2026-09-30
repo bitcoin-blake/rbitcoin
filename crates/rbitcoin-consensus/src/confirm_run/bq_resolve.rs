@@ -486,6 +486,7 @@ mod tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         let mut txdata = vec![coinbase_tx(height)];
         txdata.extend(extra);
@@ -570,6 +571,7 @@ mod tests {
                 time: 0,
                 bits: CompactTarget::from_consensus(0x207f_ffff),
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase_tx(height), spend],
         };

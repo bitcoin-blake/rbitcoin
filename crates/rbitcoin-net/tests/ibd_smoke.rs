@@ -56,6 +56,7 @@ fn mine(prev: BlockHash, time: u32, height: u32) -> Block {
         time,
         bits,
         nonce: 0,
+        v2: None,
     };
     let mut block = Block {
         header,

@@ -2753,6 +2753,7 @@ mod tests {
             time: 1_600_000_000 + n,
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: n,
+            v2: None,
         };
         rbitcoin_consensus::grind_regtest_pow(&mut h);
         h
@@ -4520,6 +4521,7 @@ mod tests {
             time,
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: n,
+            v2: None,
         };
         rbitcoin_consensus::grind_regtest_pow(&mut h);
         h
@@ -4871,6 +4873,7 @@ mod tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         rbitcoin_consensus::grind_regtest_pow(&mut h);
         h

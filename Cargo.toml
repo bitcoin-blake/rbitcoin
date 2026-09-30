@@ -76,3 +76,13 @@ unexpected_cfgs = { level = "deny", check-cfg = ['cfg(coverage)'] }
 # Nursery opt-in: Core-faithful loops fail CI unless site-allowed.
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
+
+# Bitcoin Knots v2 header (BLAKE2b chains): bitcoin-blake/rust-bitcoin branch
+# `v2-header` on `bitcoin-0.32.102`. The sibling crates come from the same
+# tree so one `BlockHash` type flows through the workspace.
+[patch.crates-io]
+bitcoin = { git = "https://github.com/bitcoin-blake/rust-bitcoin", rev = "1ed5dbeda6c509638672c3f5a6877ac114f4f65f" }
+bitcoin_hashes = { git = "https://github.com/bitcoin-blake/rust-bitcoin", rev = "1ed5dbeda6c509638672c3f5a6877ac114f4f65f" }
+bitcoin-io = { git = "https://github.com/bitcoin-blake/rust-bitcoin", rev = "1ed5dbeda6c509638672c3f5a6877ac114f4f65f" }
+bitcoin-units = { git = "https://github.com/bitcoin-blake/rust-bitcoin", rev = "1ed5dbeda6c509638672c3f5a6877ac114f4f65f" }
+base58ck = { git = "https://github.com/bitcoin-blake/rust-bitcoin", rev = "1ed5dbeda6c509638672c3f5a6877ac114f4f65f" }

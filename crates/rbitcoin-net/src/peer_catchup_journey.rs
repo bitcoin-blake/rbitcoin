@@ -135,6 +135,7 @@ async fn peer_catchup_compact_reorg() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(height, 0x01)],
         };
@@ -416,6 +417,7 @@ async fn peer_catchup_compact_reorg() {
             time: hub.tip_header().unwrap().time + 600,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase(2, 0x02), spend.clone()],
     };
@@ -538,6 +540,7 @@ async fn peer_catchup_compact_reorg() {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase(161, 0x03), spend],
     };
@@ -972,6 +975,7 @@ async fn catchup_reorg_and_drain(
             time: 1_300_000_100,
             bits,
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase(1, 0x07)],
     };

@@ -242,6 +242,7 @@ fn multi_hop_bad_prev_applies_when_full_path_bodies_ready() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(height)],
         };
@@ -349,6 +350,7 @@ fn multi_hop_bad_prev_densifies_full_path_and_reorgs() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(height)],
         };
@@ -468,6 +470,7 @@ fn apply_peer_event_body_and_control_surface() {
             time: 1_300_000_000 + u32::from(n),
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: u32::from(n),
+            v2: None,
         };
         rbitcoin_consensus::grind_regtest_pow(&mut h);
         h
@@ -779,6 +782,7 @@ fn apply_peer_event_block_framed_bq_horizon_and_headers_done() {
             time: 1_300_000_000 + n,
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: n,
+            v2: None,
         };
         let mut b = Block {
             header,
@@ -1032,6 +1036,7 @@ fn mine(
             time: 1_300_000_000 + time,
             bits: bitcoin::CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: std::iter::once(coinbase(height)).chain(txdata).collect(),
     };

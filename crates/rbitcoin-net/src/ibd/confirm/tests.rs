@@ -343,6 +343,7 @@ fn chunk_parent_ids_vouts_are_per_chunk() {
             time: 1,
             bits: CompactTarget::from_consensus(0x207fffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![
             Transaction {
@@ -563,6 +564,7 @@ fn block_input_count_sums_tx_inputs() {
         time: 1,
         bits: CompactTarget::from_consensus(0x207fffff),
         nonce: 0,
+        v2: None,
     };
     let block = Block {
         header,

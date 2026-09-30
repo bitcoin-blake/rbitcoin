@@ -63,6 +63,7 @@ fn orphan_body(prev: BlockHash, nonce: u32) -> bitcoin::Block {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce,
+            v2: None,
         },
         txdata: vec![coinbase],
     };
@@ -341,6 +342,7 @@ async fn header_flood_and_pending_walk(
         time: 1,
         bits: CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     };
     push(
         hub,
@@ -369,6 +371,7 @@ async fn header_flood_and_pending_walk(
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: i as u32,
+            v2: None,
         };
         prev = hdr.block_hash();
         headers.push(hdr);
@@ -415,6 +418,7 @@ async fn header_flood_and_pending_walk(
             time: 1 + i,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: i,
+            v2: None,
         };
         tip = hdr.block_hash();
         pending.insert(tip, hdr);
@@ -453,6 +457,7 @@ async fn header_getdata_decisions(
         time: gen.time.saturating_add(600),
         bits: CompactTarget::from_consensus(0x1d00ffff),
         nonce: 0,
+        v2: None,
     };
     let hard_hash = hard.block_hash();
     let mut pending = HashMap::new();
@@ -486,6 +491,7 @@ async fn header_getdata_decisions(
         time: 1_300_000_000,
         bits: CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     };
     let orphan_hash = orphan.block_hash();
     let mut pending = HashMap::new();
@@ -587,6 +593,7 @@ async fn shorter_higher_work_still_fetches(
         time: gen.time.saturating_add(600),
         bits: CompactTarget::from_consensus(0x1f7f_ffff),
         nonce: 0,
+        v2: None,
     };
     rbitcoin_consensus::grind_regtest_pow(&mut hard);
     let hash = hard.block_hash();
@@ -940,6 +947,7 @@ async fn ancient_weaker_fork_disconnects(
         time: gen.time.saturating_add(600),
         bits: CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     };
     rbitcoin_consensus::grind_regtest_pow(&mut side);
 

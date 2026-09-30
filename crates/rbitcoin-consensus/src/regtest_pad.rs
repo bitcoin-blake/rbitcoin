@@ -77,6 +77,7 @@ pub fn mine_regtest_paying(
         time,
         bits,
         nonce: 0,
+        v2: None,
     };
     let mut txdata = Vec::with_capacity(1 + extra_txs.len());
     txdata.push(coinbase_paying(height, script_pubkey));

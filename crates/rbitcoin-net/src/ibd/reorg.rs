@@ -687,6 +687,7 @@ mod tests {
             time,
             bits,
             nonce: 0,
+            v2: None,
         };
         let mut block = Block {
             header,

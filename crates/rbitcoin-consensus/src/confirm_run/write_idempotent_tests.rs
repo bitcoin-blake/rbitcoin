@@ -487,6 +487,7 @@ fn check_bip34_helper_and_expected_bits_no_retarget() {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![cb],
     };
@@ -637,6 +638,7 @@ fn expected_bits_extending_height0_and_no_retarget() {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![cb],
     };
@@ -1417,6 +1419,7 @@ fn structural_same_batch_overlay_skips_meta_pread() {
             time: 1_300_000_000,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase, child],
     };
@@ -1562,6 +1565,7 @@ fn structural_scratch_second_block_does_not_replay_first_slots() {
             time: 1_300_000_000,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![
             coinbase,
@@ -2822,6 +2826,7 @@ fn store_start_states_lookup_load_confirm() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: vec![coinbase(h)],
         };
@@ -2847,6 +2852,7 @@ fn store_start_states_lookup_load_confirm() {
                 time,
                 bits,
                 nonce: 0,
+                v2: None,
             },
             txdata: txs,
         };
@@ -3059,6 +3065,7 @@ fn structural_pinned_without_abs_is_invariant_error() {
             time: 1_300_000_000,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata: vec![coinbase],
     };

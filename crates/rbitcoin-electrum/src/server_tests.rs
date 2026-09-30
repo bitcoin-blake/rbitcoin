@@ -240,6 +240,7 @@ fn config_helpers_and_param_parsers() {
         time: 0,
         bits: bitcoin::CompactTarget::from_consensus(0x207fffff),
         nonce: 0,
+        v2: None,
     };
     let hex = header_hex(&hdr);
     assert_eq!(hex.len(), 160);

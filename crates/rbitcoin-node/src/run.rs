@@ -1854,6 +1854,8 @@ pub(crate) enum TipFollowWakeKind {
 }
 
 /// One `select!` result from [`tip_follow_next_wake`].
+// A v2 header makes `TipEvent` 200+ bytes; one wake per tip is not worth a Box.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TipFollowWake {
     Tip(TipEvent),
     Poll,

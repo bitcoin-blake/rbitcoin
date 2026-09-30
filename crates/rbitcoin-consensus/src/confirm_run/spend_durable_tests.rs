@@ -73,6 +73,7 @@ fn mine(prev: bitcoin::BlockHash, time: u32, height: u32, extra: Vec<Transaction
             time,
             bits,
             nonce: 0,
+            v2: None,
         },
         txdata,
     };

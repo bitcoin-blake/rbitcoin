@@ -65,6 +65,7 @@ async fn hostile_peer_session() {
         time: 0,
         bits: bitcoin::CompactTarget::from_consensus(0x207f_ffff),
         nonce: 0,
+        v2: None,
     };
     for batch in 0..4u32 {
         let headers: Vec<Header> = (0..2_000u32)

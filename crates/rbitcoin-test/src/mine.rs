@@ -135,6 +135,7 @@ pub fn mine_regtest_block(
         time,
         bits,
         nonce: 0,
+        v2: None,
     };
     let mut block = Block { header, txdata };
     block.header.merkle_root = block

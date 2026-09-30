@@ -142,6 +142,7 @@ mod tests {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         };
         let computed = header.block_hash().to_byte_array();
         let rec = header_to_record(Fk(3), &header, computed);
@@ -212,6 +213,7 @@ mod tests {
             time: 1,
             bits: CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         };
         let txid = tx.compute_txid().to_byte_array();
         // Mismatch paths.

@@ -61,6 +61,7 @@ pub fn block_from_applies(txs: &[TxApply]) -> (bitcoin::Block, Vec<[u8; 32]>) {
             time: 1,
             bits: bitcoin::CompactTarget::from_consensus(0x207f_ffff),
             nonce: 0,
+            v2: None,
         },
         txdata,
     };
