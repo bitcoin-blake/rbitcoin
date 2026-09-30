@@ -60,6 +60,23 @@ pub fn dns_seeds(network: Network) -> &'static [&'static str] {
         ],
         Network::Signet => &["seed.signet.bitcoin.sprovoost.nl"],
         Network::Regtest => &[],
+        // Knots `CMainParams` seeds; dashjr and haf serve the hardfork bit (x10000009).
+        Network::MainnetBlake2b => &[
+            "dnsseed.bitcoin.dashjr-list-of-p2p-nodes.us",
+            "seed.bitcoin.haf.ovh",
+            "seed.bitcoin.sipa.be",
+            "dnsseed.bluematt.me",
+            "seed.bitcoin.jonasschnelli.ch",
+            "seed.bitcoin.sprovoost.nl",
+            "dnsseed.emzy.de",
+            "seed.bitcoin.wiz.biz",
+            "seed.mainnet.achownodes.xyz",
+        ],
+        Network::Testnet4Blake2b => &[
+            "seed.testnet4.bitcoin.sprovoost.nl",
+            "seed.testnet4.wiz.biz",
+            "seed.testnet-bitcoin.haf.ovh",
+        ],
     }
 }
 
@@ -71,6 +88,8 @@ pub fn fixed_seed_hosts(network: Network) -> &'static [&'static str] {
         Network::Testnet4 => &["seed.testnet4.bitcoin.sprovoost.nl:48333"],
         Network::Signet => &["seed.signet.bitcoin.sprovoost.nl:38333"],
         Network::Regtest => &[],
+        Network::MainnetBlake2b => &["dnsseed.bitcoin.dashjr-list-of-p2p-nodes.us:8333"],
+        Network::Testnet4Blake2b => &["seed.testnet-bitcoin.haf.ovh:48333"],
     }
 }
 
@@ -1353,6 +1372,16 @@ mod tests {
     }
 
     #[test]
+    fn blake2b_chain_ports_and_seeds() {
+        assert_eq!(default_port(Network::MainnetBlake2b), 8333);
+        assert_eq!(default_port(Network::Testnet4Blake2b), 48333);
+        assert!(dns_seeds(Network::MainnetBlake2b).len() >= 2);
+        assert_eq!(dns_seeds(Network::Testnet4Blake2b).len(), 3);
+        assert!(!fixed_seed_hosts(Network::MainnetBlake2b).is_empty());
+        assert!(!fixed_seed_hosts(Network::Testnet4Blake2b).is_empty());
+    }
+
+    #[test]
     fn network_ports_and_seed_lists() {
         assert_eq!(default_port(Network::Mainnet), 8333);
         assert_eq!(default_port(Network::Testnet), 18333);
@@ -1388,6 +1417,8 @@ mod tests {
             Network::Testnet4,
             Network::Signet,
             Network::Regtest,
+            Network::MainnetBlake2b,
+            Network::Testnet4Blake2b,
         ] {
             let dests = socks_dns_seed_dests(net);
             let names = dns_seeds(net);

@@ -70,8 +70,8 @@ pub use convert::header_to_record;
 pub(crate) use convert::{block_to_apply, block_to_apply_with_txids_prev};
 pub use error::{block_reject_log_line, block_reject_reason, script_flag_paren, ConsensusError};
 pub use header::{
-    expected_next_bits, median_time_past, next_work_bits, retarget_bits, validate_header,
-    validate_header_on_parent, PeriodFirst,
+    blake2b_shift_at, expected_next_bits, median_time_past, next_work_bits, retarget_bits,
+    validate_header, validate_header_on_parent, PeriodFirst,
 };
 pub use index_writebehind::{
     build_indexes_released, index_tip_entry, prepare_live_indexes, spawn_index_writebehind,
@@ -80,7 +80,8 @@ pub use index_writebehind::{
 pub use milestone::{Milestone, MilestoneAnchor};
 pub use params::{
     default_milestone_height, genesis_block, mainnet_milestone_anchor, mainnet_min_chain_work_be,
-    ChainParams, Checkpoint,
+    Blake2bParams, ChainParams, Checkpoint, MAINNET_BLAKE2B, RDTS_MAX_BLOCK_WEIGHT,
+    TESTNET4_BLAKE2B,
 };
 pub use policy::PolicyResult;
 pub use regtest_pad::{

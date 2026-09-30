@@ -191,6 +191,12 @@ pub fn validate_block_structure_with_pres(
     if base > MAX_BLOCK_STRIPPED_SIZE {
         return Err(ConsensusError::BadBlock("block stripped size too large"));
     }
+    // Knots `CheckMerkleRoot`: a v2 header's tx count is the list's length.
+    if let Some(ext) = block.header.v2 {
+        if usize::from(ext.tx_count) != n {
+            return Err(ConsensusError::BadBlock("bad-txnlist-size"));
+        }
+    }
     // CheckBlock tx shape before malleation. An empty vin is "no inputs",
     // not a missing witness commitment.
     for (tx, p) in block.txdata.iter().zip(pres.iter()) {
@@ -213,6 +219,15 @@ pub fn validate_block_structure_with_pres(
     // height 1 this rejects mainnet block 1.
     if ctx.enforce_height_gates && ctx.params.bip34_active_at(ctx.height.0) {
         check_bip34_coinbase(&block.txdata[0], ctx.height.0)?;
+    }
+    // Knots `CheckBlock`: the fork block's coinbase carries the headline.
+    if ctx.enforce_height_gates {
+        if let Some(headline) = ctx.params.blake2b_headline_at(ctx.height.0) {
+            let ss = block.txdata[0].input[0].script_sig.as_bytes();
+            if !ss.windows(headline.len()).any(|w| w == headline) {
+                return Err(ConsensusError::BadBlock("bad-headline"));
+            }
+        }
     }
 
     {
@@ -254,6 +269,34 @@ pub fn validate_block_structure_with_pres(
     // BIP325 signet solution is not checked here — tip confirm only.
 
     Ok(pres)
+}
+
+/// Block weight from the precomputes (`3 × base + total`, header included).
+pub fn block_weight_from_pres(header: &bitcoin::block::Header, pres: &[TxPrecompute]) -> u64 {
+    let vi = bitcoin::consensus::encode::VarInt(pres.len() as u64).size();
+    let base = header
+        .size()
+        .saturating_add(vi)
+        .saturating_add(pres.iter().map(|p| p.base_size).sum());
+    let total = header
+        .size()
+        .saturating_add(vi)
+        .saturating_add(pres.iter().map(|p| p.total_size).sum());
+    (base.saturating_mul(3).saturating_add(total)) as u64
+}
+
+/// Knots `ContextualCheckBlock` / `ConnectBlock`: while RDTS is active the
+/// block weight cap is [`crate::params::RDTS_MAX_BLOCK_WEIGHT`].
+pub fn check_rdts_weight(
+    params: &ChainParams,
+    height: u32,
+    prev_mtp: u32,
+    weight_wu: u64,
+) -> Result<(), ConsensusError> {
+    if params.rdts_active_at(height, prev_mtp) && weight_wu > crate::params::RDTS_MAX_BLOCK_WEIGHT {
+        return Err(ConsensusError::BadBlock("bad-blk-weight-reduced_data"));
+    }
+    Ok(())
 }
 
 /// Witness commitment before weight. Padding is not the block hash's fault.

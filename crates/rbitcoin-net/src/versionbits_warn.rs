@@ -17,8 +17,10 @@ const VERSIONBITS_NUM_BITS: i32 = 29;
 /// Period / threshold for unknown-bit warnings.
 pub fn warn_period_threshold(network: Network) -> (u32, u32) {
     match network {
-        Network::Mainnet => (2016, 1815),
-        Network::Testnet | Network::Testnet4 | Network::Signet => (2016, 2016 * 3 / 4),
+        Network::Mainnet | Network::MainnetBlake2b => (2016, 1815),
+        Network::Testnet | Network::Testnet4 | Network::Testnet4Blake2b | Network::Signet => {
+            (2016, 2016 * 3 / 4)
+        }
         Network::Regtest => (144, 144 * 3 / 4),
     }
 }
@@ -26,9 +28,9 @@ pub fn warn_period_threshold(network: Network) -> (u32, u32) {
 /// Blocks below this height are not counted (Core `MinBIP9WarningHeight`).
 pub fn warn_min_height(network: Network) -> u32 {
     match network {
-        Network::Mainnet => 711_648,
+        Network::Mainnet | Network::MainnetBlake2b => 711_648,
         Network::Testnet => 2_013_984,
-        Network::Testnet4 | Network::Signet | Network::Regtest => 0,
+        Network::Testnet4 | Network::Testnet4Blake2b | Network::Signet | Network::Regtest => 0,
     }
 }
 
@@ -160,6 +162,8 @@ mod tests {
         assert_eq!(rule(Network::Testnet), ((2016, 1512), 2_013_984));
         assert_eq!(rule(Network::Signet), ((2016, 1512), 0));
         assert_eq!(rule(Network::Testnet4), ((2016, 1512), 0));
+        assert_eq!(rule(Network::MainnetBlake2b), ((2016, 1815), 711_648));
+        assert_eq!(rule(Network::Testnet4Blake2b), ((2016, 1512), 0));
         assert_eq!(rule(Network::Regtest), ((144, 108), 0));
     }
 

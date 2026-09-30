@@ -891,6 +891,8 @@ fn p3_default_milestone_heights() {
     assert_eq!(default_milestone_height(Network::Testnet), 2_500_000);
     assert_eq!(default_milestone_height(Network::Signet), 0);
     assert_eq!(default_milestone_height(Network::Testnet4), 0);
+    assert_eq!(default_milestone_height(Network::Testnet4Blake2b), 0);
+    assert_eq!(default_milestone_height(Network::MainnetBlake2b), 840_000);
     let anchor = crate::mainnet_milestone_anchor();
     assert_eq!(
         anchor.hash.to_string(),
@@ -2496,4 +2498,80 @@ fn max_block_tx_count_matches_weight_over_ten_byte_tx() {
     assert_eq!(MIN_TX_WEIGHT, 40, "10-byte tx at witness scale 4");
     assert_eq!(MAX_BLOCK_TX_COUNT, 100_000);
     assert_eq!(MAX_BLOCK_TX_COUNT as u64 * MIN_TX_WEIGHT, MAX_BLOCK_WEIGHT);
+}
+
+fn v2_ext(tx_count: u16, height: i32) -> bitcoin::block::HeaderV2 {
+    bitcoin::block::HeaderV2 {
+        nonce2: 0,
+        nonce3: 0,
+        extranonce: [0; 16],
+        time_offset: 0,
+        tx_count,
+        flags: 0,
+        xor_key_mask_clear_bits: 0,
+        xor_key: [0; 16],
+        height,
+        mm_rhs: [0; 32],
+    }
+}
+
+#[test]
+fn v2_header_tx_count_must_match_the_list() {
+    let mut b = block_with(vec![coinbase(1)]);
+    b.header.v2 = Some(v2_ext(1, 1));
+    validate_block_structure(&b, &ctx_h(1)).expect("tx count matches");
+    b.header.v2 = Some(v2_ext(2, 1));
+    let err = validate_block_structure(&b, &ctx_h(1)).unwrap_err();
+    assert_bad_block(err, "bad-txnlist-size");
+    b.header.v2 = None;
+    validate_block_structure(&b, &ctx_h(1)).expect("a classic header carries no count");
+}
+
+#[test]
+fn fork_block_coinbase_carries_the_headline() {
+    use crate::params::{Blake2bParams, TESTNET4_BLAKE2B};
+    let mut p = ChainParams::testnet4_blake2b();
+    p.blake2b = Some(Blake2bParams {
+        fork_height: 1,
+        headline: Some(b"Deride And Conquer"),
+        ..TESTNET4_BLAKE2B
+    });
+    let p: &'static ChainParams = Box::leak(Box::new(p));
+    let ctx = ValidationContext::at(p, Height(1), Milestone::NONE);
+    let mut cb = coinbase(1);
+    let mut b = block_with(vec![cb.clone()]);
+    b.header.v2 = Some(v2_ext(1, 1));
+    let err = validate_block_structure(&b, &ctx).unwrap_err();
+    assert_bad_block(err, "bad-headline");
+    let mut ss = cb.input[0].script_sig.to_bytes();
+    ss.extend_from_slice(b"Deride And Conquer");
+    cb.input[0].script_sig = ScriptBuf::from_bytes(ss);
+    let mut b = block_with(vec![cb]);
+    b.header.v2 = Some(v2_ext(1, 1));
+    validate_block_structure(&b, &ctx).expect("headline present");
+    // Only the fork block, and never without the height gates (archive prep).
+    let ctx2 = ValidationContext::at(p, Height(2), Milestone::NONE);
+    let mut b2 = block_with(vec![coinbase(2)]);
+    b2.header.v2 = Some(v2_ext(1, 2));
+    validate_block_structure(&b2, &ctx2).expect("no headline after the fork block");
+}
+
+#[test]
+fn rdts_weight_cap_applies_from_the_fork_until_expiry() {
+    use crate::block::check_rdts_weight;
+    use crate::params::{RDTS_MAX_BLOCK_WEIGHT, TESTNET4_BLAKE2B};
+    let t4b = ChainParams::testnet4_blake2b();
+    let fork = TESTNET4_BLAKE2B.fork_height;
+    let expiry = TESTNET4_BLAKE2B.rdts_expiry;
+    assert!(check_rdts_weight(&t4b, fork, expiry - 1, RDTS_MAX_BLOCK_WEIGHT).is_ok());
+    assert_bad_block(
+        check_rdts_weight(&t4b, fork, expiry - 1, RDTS_MAX_BLOCK_WEIGHT + 1).unwrap_err(),
+        "bad-blk-weight-reduced_data",
+    );
+    assert!(check_rdts_weight(&t4b, fork - 1, expiry - 1, 4_000_000).is_ok());
+    assert!(
+        check_rdts_weight(&t4b, fork, expiry, 4_000_000).is_ok(),
+        "parent MTP at expiry"
+    );
+    assert!(check_rdts_weight(&ChainParams::testnet4(), fork, 0, 4_000_000).is_ok());
 }

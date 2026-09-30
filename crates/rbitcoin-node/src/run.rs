@@ -1634,13 +1634,16 @@ async fn start_esplora_if_ready(
         return Vec::new();
     }
     let q = hub.query.clone();
-    let btc_net = match network {
-        rbitcoin_primitives::Network::Mainnet => bitcoin::Network::Bitcoin,
-        rbitcoin_primitives::Network::Testnet => bitcoin::Network::Testnet,
-        rbitcoin_primitives::Network::Testnet4 => bitcoin::Network::Testnet4,
-        rbitcoin_primitives::Network::Signet => bitcoin::Network::Signet,
-        rbitcoin_primitives::Network::Regtest => bitcoin::Network::Regtest,
-    };
+    let btc_net =
+        match network {
+            rbitcoin_primitives::Network::Mainnet
+            | rbitcoin_primitives::Network::MainnetBlake2b => bitcoin::Network::Bitcoin,
+            rbitcoin_primitives::Network::Testnet => bitcoin::Network::Testnet,
+            rbitcoin_primitives::Network::Testnet4
+            | rbitcoin_primitives::Network::Testnet4Blake2b => bitcoin::Network::Testnet4,
+            rbitcoin_primitives::Network::Signet => bitcoin::Network::Signet,
+            rbitcoin_primitives::Network::Regtest => bitcoin::Network::Regtest,
+        };
     let mut ecfg = EsploraConfig::with_listen(listen, btc_net);
     if enable_block_template {
         let q = Arc::clone(&hub.query);

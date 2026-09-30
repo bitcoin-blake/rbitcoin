@@ -870,9 +870,10 @@ pub(crate) fn rpc_client_version(semver: &str) -> u64 {
 
 pub(crate) fn chain_name(n: Network) -> &'static str {
     match n {
-        Network::Mainnet => "main",
+        // Knots reports the base chain's name on its BLAKE2b chains.
+        Network::Mainnet | Network::MainnetBlake2b => "main",
         Network::Testnet => "test",
-        Network::Testnet4 => "testnet4",
+        Network::Testnet4 | Network::Testnet4Blake2b => "testnet4",
         Network::Signet => "signet",
         Network::Regtest => "regtest",
     }

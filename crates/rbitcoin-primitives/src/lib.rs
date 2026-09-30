@@ -199,6 +199,11 @@ pub enum Network {
     Testnet4,
     Signet,
     Regtest,
+    /// Bitcoin Knots BLAKE2b chain from mainnet (`xbt`): mainnet history to
+    /// 961,639, v2 headers from 961,640.
+    MainnetBlake2b,
+    /// Bitcoin Knots BLAKE2b chain from testnet4 (`txbt4`): v2 headers from 150,308.
+    Testnet4Blake2b,
 }
 
 impl Network {
@@ -209,6 +214,8 @@ impl Network {
             Network::Testnet4 => "testnet4",
             Network::Signet => "signet",
             Network::Regtest => "regtest",
+            Network::MainnetBlake2b => "mainnet-blake2b",
+            Network::Testnet4Blake2b => "testnet4-blake2b",
         }
     }
 
@@ -219,6 +226,8 @@ impl Network {
             "testnet4" => Ok(Network::Testnet4),
             "signet" => Ok(Network::Signet),
             "regtest" => Ok(Network::Regtest),
+            "mainnet-blake2b" | "xbt" => Ok(Network::MainnetBlake2b),
+            "testnet4-blake2b" | "txbt4" => Ok(Network::Testnet4Blake2b),
             other => Err(ParseNetworkError {
                 input: other.to_string(),
             }),
@@ -228,9 +237,9 @@ impl Network {
     /// Core-matching P2P listen port.
     pub fn default_p2p_port(self) -> u16 {
         match self {
-            Network::Mainnet => 8333,
+            Network::Mainnet | Network::MainnetBlake2b => 8333,
             Network::Testnet => 18333,
-            Network::Testnet4 => 48333,
+            Network::Testnet4 | Network::Testnet4Blake2b => 48333,
             Network::Signet => 38333,
             Network::Regtest => 18444,
         }
@@ -239,9 +248,9 @@ impl Network {
     /// Core-matching JSON-RPC TCP port.
     pub fn default_rpc_port(self) -> u16 {
         match self {
-            Network::Mainnet => 8332,
+            Network::Mainnet | Network::MainnetBlake2b => 8332,
             Network::Testnet => 18332,
-            Network::Testnet4 => 48332,
+            Network::Testnet4 | Network::Testnet4Blake2b => 48332,
             Network::Signet => 38332,
             Network::Regtest => 18443,
         }
@@ -363,6 +372,26 @@ mod tests {
         assert_eq!(format!("{}", Height(42)), "42");
         assert_eq!(Height(u32::MAX).next(), None);
         assert_eq!(Height(0).next(), Some(Height(1)));
+    }
+
+    #[test]
+    fn blake2b_network_names_and_ports() {
+        assert_eq!(Network::parse("xbt").unwrap(), Network::MainnetBlake2b);
+        assert_eq!(
+            Network::parse("mainnet-blake2b").unwrap(),
+            Network::MainnetBlake2b
+        );
+        assert_eq!(Network::MainnetBlake2b.as_str(), "mainnet-blake2b");
+        assert_eq!(Network::parse("txbt4").unwrap(), Network::Testnet4Blake2b);
+        assert_eq!(
+            Network::parse("TESTNET4-BLAKE2B").unwrap(),
+            Network::Testnet4Blake2b
+        );
+        assert_eq!(Network::Testnet4Blake2b.as_str(), "testnet4-blake2b");
+        assert_eq!(Network::MainnetBlake2b.default_p2p_port(), 8333);
+        assert_eq!(Network::MainnetBlake2b.default_rpc_port(), 8332);
+        assert_eq!(Network::Testnet4Blake2b.default_p2p_port(), 48333);
+        assert_eq!(Network::Testnet4Blake2b.default_rpc_port(), 48332);
     }
 
     #[test]

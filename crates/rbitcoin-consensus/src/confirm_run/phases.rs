@@ -167,6 +167,13 @@ pub(super) fn assemble_run(
             }
         }
 
+        crate::block::check_rdts_weight(
+            params,
+            height.0,
+            prev_mtp,
+            crate::block::block_weight_from_pres(&block.header, &meta.pres),
+        )?;
+
         let bip16_active =
             crate::block::bip16_active_from_prev_mtp(params, height.0, &block_hash, prev_mtp);
 

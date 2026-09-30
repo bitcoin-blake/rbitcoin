@@ -135,7 +135,73 @@ pub(crate) fn check_timewarp(
     Ok(())
 }
 
-/// BIP34/66/65 `nVersion` floors and the 2-hour future-time cap (wall clock).
+/// Knots `CheckBlockHeader` / `ContextualCheckBlockHeaderVolatile` for the v2
+/// header: v2 exactly from the fork height, no reserved flag bits, and the
+/// header's own height field is the chain height.
+pub(crate) fn check_header_v2_rules(
+    params: &ChainParams,
+    height: Height,
+    header: &Header,
+) -> Result<(), ConsensusError> {
+    match header.v2 {
+        Some(ext) => {
+            if !params.blake2b_active_at(height.0) {
+                return Err(ConsensusError::BadHeader("bad-version-sha256d"));
+            }
+            if ext.flags & 0xc0 != 0 {
+                return Err(ConsensusError::BadHeader("bad-flags-highbits"));
+            }
+            if ext.height != height.0 as i32 {
+                return Err(ConsensusError::BadHeader("bad-header-height"));
+            }
+        }
+        None => {
+            if params.blake2b_active_at(height.0) {
+                return Err(ConsensusError::BadHeader("bad-version-blake2b"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Knots `ApplyBlake2bTargetShift`: at the fork height the computed target is
+/// shifted left by the chain's `target_shift`, clamped to the pow limit. Every
+/// other height passes through.
+pub fn blake2b_shift_at(params: &ChainParams, height: u32, bits: CompactTarget) -> CompactTarget {
+    match params.blake2b {
+        Some(b) if b.fork_height == height => {
+            shift_compact_target(bits, b.target_shift, params.pow_limit)
+        }
+        _ => bits,
+    }
+}
+
+/// `bits << shift` in Core's compact form (`arith_uint256::SetCompact`, `<<=`,
+/// `GetCompact`), or the pow limit's compact when the result would pass it.
+fn shift_compact_target(bits: CompactTarget, shift: u8, pow_limit: Target) -> CompactTarget {
+    let raw = bits.to_consensus();
+    let mut exp = i64::from(raw >> 24);
+    let mut mant = u64::from(raw & 0x007f_ffff);
+    mant <<= u32::from(shift % 8);
+    exp += i64::from(shift / 8);
+    while mant > 0x00ff_ffff {
+        mant >>= 8;
+        exp += 1;
+    }
+    if mant & 0x0080_0000 != 0 {
+        mant >>= 8;
+        exp += 1;
+    }
+    let shifted = CompactTarget::from_consensus(((exp as u32) << 24) | mant as u32);
+    if Target::from_compact(shifted) > pow_limit {
+        pow_limit.to_compact_lossy()
+    } else {
+        shifted
+    }
+}
+
+/// BIP34/66/65 `nVersion` floors, the v2-header rules and the 2-hour
+/// future-time cap (wall clock).
 ///
 /// Core `ContextualCheckBlockHeader`. Assemble uses this instead of a second
 /// [`validate_header`] (MTP walk + header rehash).
@@ -145,6 +211,7 @@ pub(crate) fn check_header_version_and_future_time(
     header: &Header,
 ) -> Result<(), ConsensusError> {
     const MAX_FUTURE_BLOCK_TIME: u64 = 2 * 60 * 60;
+    check_header_v2_rules(params, height, header)?;
     let now = crate::clock::current_now();
     if u64::from(header.time) > now.saturating_add(MAX_FUTURE_BLOCK_TIME) {
         return Err(ConsensusError::BadHeader("timestamp too far in future"));
@@ -258,7 +325,8 @@ pub struct PeriodFirst {
     pub bits: CompactTarget,
 }
 
-/// Difficulty for the header at `height`, from the parent and the period start.
+/// Difficulty for the header at `height`, from the parent and the period start,
+/// with the one-off BLAKE2b fork shift applied at the fork height.
 ///
 /// `period_first` is the header at `height - interval` when `height` is a
 /// retarget boundary. `bits_at` supplies earlier `nBits` for the testnet
@@ -276,20 +344,21 @@ pub fn next_work_bits(
         return None;
     }
     let interval = params.difficulty_adjustment_interval();
-    if interval == 0 || !height.is_multiple_of(interval) {
-        return min_diff_bits(
+    let bits = if interval == 0 || !height.is_multiple_of(interval) {
+        min_diff_bits(
             params,
             height,
             prev_bits,
             prev_time,
             header_time,
             &mut bits_at,
-        );
-    }
-    if params.no_pow_retargeting() {
-        return Some(prev_bits);
-    }
-    Some(retarget_bits(params, prev_bits, prev_time, period_first?))
+        )?
+    } else if params.no_pow_retargeting() {
+        prev_bits
+    } else {
+        retarget_bits(params, prev_bits, prev_time, period_first?)
+    };
+    Some(blake2b_shift_at(params, height, bits))
 }
 
 /// Retarget at a period boundary from the parent and the period's first header
@@ -617,6 +686,112 @@ mod median_time_past_tests {
         assert_eq!(walked.to_consensus(), h0.bits);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn knots_v2_header() -> Header {
+        // Bitcoin Knots `block_header_v2.json`, vector `profile_0_time_offset` (height 840000).
+        let raw = rbitcoin_primitives::hex_decode("000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab").unwrap();
+        bitcoin::consensus::deserialize(&raw).unwrap()
+    }
+
+    #[test]
+    fn v2_header_rules_follow_the_fork_height() {
+        let mut params = ChainParams::testnet4_blake2b();
+        params.blake2b = Some(crate::params::Blake2bParams {
+            fork_height: 840_000,
+            ..crate::params::TESTNET4_BLAKE2B
+        });
+        let v2 = knots_v2_header();
+        let mut classic = v2;
+        classic.v2 = None;
+        let reason = |r: Result<(), ConsensusError>| match r {
+            Err(ConsensusError::BadHeader(m)) => m,
+            other => panic!("expected BadHeader, got {other:?}"),
+        };
+        assert!(check_header_v2_rules(&params, Height(840_000), &v2).is_ok());
+        assert!(check_header_v2_rules(&params, Height(839_999), &classic).is_ok());
+        assert_eq!(
+            reason(check_header_v2_rules(&params, Height(839_999), &v2)),
+            "bad-version-sha256d"
+        );
+        assert_eq!(
+            reason(check_header_v2_rules(&params, Height(840_000), &classic)),
+            "bad-version-blake2b"
+        );
+        assert_eq!(
+            reason(check_header_v2_rules(&params, Height(840_001), &v2)),
+            "bad-header-height"
+        );
+        let mut high = v2;
+        high.v2.as_mut().unwrap().flags |= 0x40;
+        assert_eq!(
+            reason(check_header_v2_rules(&params, Height(840_000), &high)),
+            "bad-flags-highbits"
+        );
+        // A SHA256d chain never takes a v2 header and never demands one.
+        let t4 = ChainParams::testnet4();
+        assert_eq!(
+            reason(check_header_v2_rules(&t4, Height(840_000), &v2)),
+            "bad-version-sha256d"
+        );
+        assert!(check_header_v2_rules(&t4, Height(840_000), &classic).is_ok());
+    }
+
+    #[test]
+    fn blake2b_target_shift_matches_core_compact_math() {
+        let limit = Target::MAX_ATTAINABLE_TESTNET;
+        let sh = |bits: u32, shift: u8| {
+            shift_compact_target(CompactTarget::from_consensus(bits), shift, limit).to_consensus()
+        };
+        // Pinned against arith_uint256 SetCompact / <<= / GetCompact.
+        assert_eq!(sh(0x1a00_82a5, 20), 0x1c08_2a50);
+        assert_eq!(sh(0x1702_905c, 22), 0x1a00_a417);
+        assert_eq!(sh(0x1a12_3456, 3), 0x1b00_91a2, "sign-bit renormalisation");
+        assert_eq!(sh(0x1a00_ffff, 20), 0x1c0f_fff0);
+        for at_or_over in [0x1d00_ffffu32, 0x1c00_ffff, 0x1b00_ffff] {
+            assert_eq!(sh(at_or_over, 20), 0x1d00_ffff, "clamped to the pow limit");
+        }
+        // Only the fork height is shifted.
+        let t4b = ChainParams::testnet4_blake2b();
+        let full = CompactTarget::from_consensus(0x1a00_82a5);
+        assert_eq!(
+            blake2b_shift_at(&t4b, 150_308, full).to_consensus(),
+            0x1c08_2a50
+        );
+        assert_eq!(blake2b_shift_at(&t4b, 150_307, full), full);
+        assert_eq!(blake2b_shift_at(&t4b, 150_309, full), full);
+        assert_eq!(
+            blake2b_shift_at(&ChainParams::testnet4(), 150_308, full),
+            full
+        );
+        assert_eq!(
+            blake2b_shift_at(
+                &ChainParams::mainnet_blake2b(),
+                961_640,
+                CompactTarget::from_consensus(0x1702_905c)
+            )
+            .to_consensus(),
+            0x1a00_a417
+        );
+    }
+
+    #[test]
+    fn testnet4_fork_block_bits_are_the_shifted_minimum() {
+        // Knots testnet4 150,307 → 150,308: 81,000 s gap takes the 20-minute
+        // exception, then the shift clamps at the limit. Times from the chain.
+        let t4b = ChainParams::testnet4_blake2b();
+        let limit = t4b.pow_limit.to_compact_lossy();
+        let bits = next_work_bits(
+            &t4b,
+            150_308,
+            limit,
+            1_788_049_475,
+            1_788_130_417,
+            None,
+            |_| Some(limit),
+        )
+        .unwrap();
+        assert_eq!(bits.to_consensus(), 0x1d00_ffff);
     }
 
     #[test]

@@ -34,7 +34,44 @@ pub struct ChainParams {
     /// Header hash at BIP34 height that turns BIP30 off. `None` on signet and
     /// regtest (Core's null hash), so BIP30 stays on at every height.
     pub bip34_hash: Option<BlockHash>,
+    /// Bitcoin Knots BLAKE2b hardfork (`None` = a SHA256d chain).
+    pub blake2b: Option<Blake2bParams>,
 }
+
+/// Bitcoin Knots BLAKE2b hardfork parameters (`Consensus::Params` in Knots
+/// `v29.4.1.knots20260508`: `Blake2bHeight`, `Blake2bTargetShift`,
+/// `RdtsExpiryTime`, `Blake2bHeadline`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Blake2bParams {
+    /// First block with a v2 header and BLAKE2b proof of work.
+    pub fork_height: u32,
+    /// One-off left shift of the computed target at `fork_height`, clamped to the pow limit.
+    pub target_shift: u8,
+    /// RDTS (BIP110 rules as consensus) applies from `fork_height` while the
+    /// parent's median-time-past is below this.
+    pub rdts_expiry: u32,
+    /// Bytes the fork block's coinbase scriptSig must contain.
+    pub headline: Option<&'static [u8]>,
+}
+
+/// Mainnet fork: Knots `CMainParams`.
+pub const MAINNET_BLAKE2B: Blake2bParams = Blake2bParams {
+    fork_height: 961_640,
+    target_shift: 22,
+    rdts_expiry: 1_819_756_800, // 2027-09-01 00:00 UTC
+    headline: Some(b"8-30 NYPost Deride And Conquer"),
+};
+
+/// Testnet4 fork: Knots `CTestNet4Params`.
+pub const TESTNET4_BLAKE2B: Blake2bParams = Blake2bParams {
+    fork_height: 150_308,
+    target_shift: 20,
+    rdts_expiry: 1_791_903_600, // 2026-10-13 15:00 UTC
+    headline: None,
+};
+
+/// Block weight cap while RDTS is active (Knots `REDUCED_DATA_MAX_BLOCK_WEIGHT`).
+pub const RDTS_MAX_BLOCK_WEIGHT: u64 = 800_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Checkpoint {
@@ -50,7 +87,44 @@ impl ChainParams {
             rbitcoin_primitives::Network::Testnet4 => Self::testnet4(),
             rbitcoin_primitives::Network::Signet => Self::signet(),
             rbitcoin_primitives::Network::Regtest => Self::regtest(),
+            rbitcoin_primitives::Network::MainnetBlake2b => Self::mainnet_blake2b(),
+            rbitcoin_primitives::Network::Testnet4Blake2b => Self::testnet4_blake2b(),
         }
+    }
+
+    /// Knots' BLAKE2b chain from mainnet: mainnet plus the three fork
+    /// checkpoints (first BIP110 block, last SHA256d block, first BLAKE2b block).
+    pub fn mainnet_blake2b() -> Self {
+        let mut p = Self::mainnet();
+        for (height, hex) in [
+            (
+                961_632,
+                "0000000000000000000169eb6f811ddbd0daf343af7b62180cdb13e7c78dbc16",
+            ),
+            (
+                961_639,
+                "00000000000000000001bbc439e13f749dca850d32c7a2834165338713027e65",
+            ),
+            (
+                961_640,
+                "0000000000000050c1e5f69672f459293be14f46e5a494e7a8c8541396f18eeb",
+            ),
+        ] {
+            p.checkpoints.push(Checkpoint {
+                height,
+                hash: block_hash_from_display_hex(hex),
+            });
+        }
+        p.blake2b = Some(MAINNET_BLAKE2B);
+        p
+    }
+
+    /// Knots' BLAKE2b chain from testnet4. Knots pins no checkpoint there: the
+    /// v2-header rule at the fork height is what leaves Core's chain.
+    pub fn testnet4_blake2b() -> Self {
+        let mut p = Self::testnet4();
+        p.blake2b = Some(TESTNET4_BLAKE2B);
+        p
     }
 
     pub fn regtest() -> Self {
@@ -72,6 +146,7 @@ impl ChainParams {
             segwit_height_overlay: None,
             subsidy_halving_overlay: None,
             bip34_hash: None,
+            blake2b: None,
         }
     }
 
@@ -90,6 +165,7 @@ impl ChainParams {
             bip34_hash: Some(bip34_block_hash(
                 "000000000000024b89b42a942fe0d9fcb078ad50a8c5d6e8e4a0c9d3c3c0c62e",
             )),
+            blake2b: None,
         }
     }
 
@@ -108,6 +184,7 @@ impl ChainParams {
             bip34_hash: Some(bip34_block_hash(
                 "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8",
             )),
+            blake2b: None,
         }
     }
 
@@ -126,6 +203,7 @@ impl ChainParams {
             segwit_height_overlay: None,
             subsidy_halving_overlay: None,
             bip34_hash: None,
+            blake2b: None,
         }
     }
 
@@ -156,6 +234,7 @@ impl ChainParams {
             segwit_height_overlay: None,
             subsidy_halving_overlay: None,
             bip34_hash: None,
+            blake2b: None,
         })
     }
 
@@ -179,6 +258,34 @@ impl ChainParams {
     /// Core enforces it on testnet4 only.
     pub fn enforce_bip94(&self) -> bool {
         self.network == Network::Testnet4
+    }
+
+    /// First BLAKE2b (v2 header) height, `None` on a SHA256d chain.
+    pub fn blake2b_fork_height(&self) -> Option<u32> {
+        self.blake2b.map(|b| b.fork_height)
+    }
+
+    /// Knots `IsBlake2bHeight`: v2 headers and BLAKE2b proof of work from here.
+    #[inline]
+    pub fn blake2b_active_at(&self, height: u32) -> bool {
+        self.blake2b_fork_height().is_some_and(|h| height >= h)
+    }
+
+    /// Knots `RdtsActiveAt`: from the fork height while the parent's
+    /// median-time-past is below the expiry. Genesis has no parent and is never
+    /// subject to it.
+    pub fn rdts_active_at(&self, height: u32, parent_mtp: u32) -> bool {
+        match self.blake2b {
+            Some(b) => height > 0 && height >= b.fork_height && parent_mtp < b.rdts_expiry,
+            None => false,
+        }
+    }
+
+    /// Bytes the coinbase scriptSig must contain at `height` (the fork block only).
+    pub fn blake2b_headline_at(&self, height: u32) -> Option<&'static [u8]> {
+        self.blake2b
+            .filter(|b| b.fork_height == height)
+            .and_then(|b| b.headline)
     }
 
     pub fn allow_min_difficulty_blocks(&self) -> bool {
@@ -469,9 +576,11 @@ pub const MAINNET_MIN_CHAIN_WORK: &str =
 /// override with `--milestone HEIGHT` (height-only) or `--milestone 0`.
 pub fn default_milestone_height(network: rbitcoin_primitives::Network) -> u32 {
     match network {
-        rbitcoin_primitives::Network::Mainnet => 840_000,
+        rbitcoin_primitives::Network::Mainnet | rbitcoin_primitives::Network::MainnetBlake2b => {
+            840_000
+        }
         rbitcoin_primitives::Network::Testnet => 2_500_000,
-        rbitcoin_primitives::Network::Testnet4 => 0,
+        rbitcoin_primitives::Network::Testnet4 | rbitcoin_primitives::Network::Testnet4Blake2b => 0,
         rbitcoin_primitives::Network::Signet => 0,
         rbitcoin_primitives::Network::Regtest => 0,
     }
@@ -687,6 +796,68 @@ mod tests {
             p.checkpoint_at(Height(295_000)).unwrap().to_string(),
             "00000000000000004d9b4ef50f0f9d686fd69db2e03af35a100370c64632a983"
         );
+    }
+
+    #[test]
+    fn blake2b_chains_carry_the_fork_params() {
+        let xbt = ChainParams::mainnet_blake2b();
+        assert_eq!(xbt.network, bitcoin::Network::Bitcoin);
+        assert_eq!(xbt.genesis_hash, ChainParams::mainnet().genesis_hash);
+        assert_eq!(xbt.blake2b, Some(MAINNET_BLAKE2B));
+        assert_eq!(xbt.blake2b_fork_height(), Some(961_640));
+        assert!(!xbt.blake2b_active_at(961_639));
+        assert!(xbt.blake2b_active_at(961_640));
+        assert_eq!(
+            xbt.checkpoint_at(Height(961_640)).unwrap().to_string(),
+            "0000000000000050c1e5f69672f459293be14f46e5a494e7a8c8541396f18eeb"
+        );
+        assert_eq!(
+            xbt.checkpoint_at(Height(961_639)).unwrap().to_string(),
+            "00000000000000000001bbc439e13f749dca850d32c7a2834165338713027e65"
+        );
+        assert!(xbt.checkpoint_at(Height(961_632)).is_some());
+        assert!(
+            xbt.checkpoint_at(Height(295_000)).is_some(),
+            "mainnet checkpoints kept"
+        );
+        let expiry = MAINNET_BLAKE2B.rdts_expiry;
+        assert!(xbt.rdts_active_at(961_640, expiry - 1));
+        assert!(!xbt.rdts_active_at(961_640, expiry));
+        assert!(!xbt.rdts_active_at(961_639, 0));
+        assert!(!xbt.rdts_active_at(0, 0));
+        assert_eq!(
+            xbt.blake2b_headline_at(961_640),
+            Some(b"8-30 NYPost Deride And Conquer".as_slice())
+        );
+        assert_eq!(xbt.blake2b_headline_at(961_641), None);
+        assert!(!xbt.enforce_bip94());
+    }
+
+    #[test]
+    fn testnet4_blake2b_params_and_for_network() {
+        use rbitcoin_primitives::Network;
+        let t4b = ChainParams::testnet4_blake2b();
+        assert_eq!(t4b.network, bitcoin::Network::Testnet4);
+        assert_eq!(t4b.blake2b, Some(TESTNET4_BLAKE2B));
+        assert_eq!(t4b.blake2b_fork_height(), Some(150_308));
+        assert!(
+            t4b.checkpoints.is_empty(),
+            "Knots pins no testnet4 checkpoint"
+        );
+        assert_eq!(t4b.blake2b_headline_at(150_308), None);
+        assert!(t4b.enforce_bip94());
+        assert_eq!(t4b.csv_height(), 1);
+        assert!(t4b.rdts_active_at(150_308, TESTNET4_BLAKE2B.rdts_expiry - 1));
+
+        for (net, fork) in [
+            (Network::MainnetBlake2b, Some(961_640)),
+            (Network::Testnet4Blake2b, Some(150_308)),
+            (Network::Mainnet, None),
+            (Network::Testnet4, None),
+        ] {
+            assert_eq!(ChainParams::for_network(net).blake2b_fork_height(), fork);
+        }
+        assert!(!ChainParams::mainnet().blake2b_active_at(u32::MAX));
     }
 
     #[test]
