@@ -97,20 +97,20 @@ impl FramedMessage {
         Some(u64::from_le_bytes(self.payload[..8].try_into().ok()?))
     }
 
-    /// Block hash from the wire header (first 80 payload bytes) — no full deserialize.
+    /// Block hash from the wire header prefix (80 bytes, or 164 for a v2 header) —
+    /// no full block deserialize.
     ///
     /// Used so IBD can free getdata in-flight as soon as the TCP frame is complete,
     /// while `block` payload decode still runs on the blocking pool. Waiting for
     /// full deserialize to free slots made healthy peers look stalled (socket idle
     /// with `in_flight` still full).
     pub fn block_hash_from_header(&self) -> Option<bitcoin::BlockHash> {
-        if !self.is_block() || self.payload.len() < 80 {
+        if !self.is_block() {
             return None;
         }
-        use bitcoin::hashes::{sha256d, Hash as _};
-        let header = &self.payload[..80];
-        let dig = sha256d::Hash::hash(header);
-        Some(bitcoin::BlockHash::from_byte_array(dig.to_byte_array()))
+        let (header, _): (bitcoin::block::Header, usize) =
+            bitcoin::consensus::encode::deserialize_partial(&self.payload).ok()?;
+        Some(header.block_hash())
     }
 
     /// Extra bytes / unknown command → [`NetworkMessage::Unknown`].
@@ -297,6 +297,37 @@ mod tests {
         };
         assert!(!frame.decode_is_cpu_heavy());
         assert!(matches!(frame.decode().payload(), NetworkMessage::Verack));
+    }
+
+    #[test]
+    fn block_hash_from_header_reads_a_v2_prefix() {
+        // Bitcoin Knots `block_header_v2.json`, vector `profile_0_time_offset`.
+        let raw = rbitcoin_primitives::hex_decode("000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab").unwrap();
+        let header: bitcoin::block::Header = bitcoin::consensus::deserialize(&raw).unwrap();
+        let mut payload = raw.clone();
+        payload.push(0); // empty tx list
+        let frame = FramedMessage {
+            magic: signet_magic(),
+            command: *b"block\0\0\0\0\0\0\0",
+            payload,
+        };
+        assert_eq!(
+            frame.block_hash_from_header().expect("v2 header hash"),
+            header.block_hash()
+        );
+        assert_eq!(
+            header.block_hash().to_string(),
+            "4b495dcf05d70a49785b799b22284fbcd9dd1209237c53c87e4674b15587d704"
+        );
+        let short = FramedMessage {
+            magic: signet_magic(),
+            command: *b"block\0\0\0\0\0\0\0",
+            payload: raw[..100].to_vec(),
+        };
+        assert!(
+            short.block_hash_from_header().is_none(),
+            "a flagged prefix needs 164 bytes"
+        );
     }
 
     #[test]

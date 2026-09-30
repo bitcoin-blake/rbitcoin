@@ -2270,21 +2270,21 @@ fn pow_linked(headers: &[Header]) -> bool {
     true
 }
 
-const ADOPT_MAGIC: &[u8; 8] = b"rbtchdr1";
-/// period height u32 ‖ period header 80 ‖ full-diff height u32 ‖ full-diff bits u32.
-const DIFF_SNAP_LEN: usize = 4 + 80 + 4 + 4;
+const ADOPT_MAGIC: &[u8; 8] = b"rbtchdr2";
+/// A header slot: 164 bytes, a classic header zero-padded (version bit 31 says which).
+const ADOPT_HEADER_LEN: usize = Header::V2_SIZE;
+/// period height u32 ‖ period header slot ‖ full-diff height u32 ‖ full-diff bits u32.
+const DIFF_SNAP_LEN: usize = 4 + ADOPT_HEADER_LEN + 4 + 4;
 
 fn adopt_path(hub: &ChainHub) -> std::path::PathBuf {
     hub.query.store().path().join("header.adopt")
 }
 
 fn write_header(buf: &mut Vec<u8>, header: Option<Header>) {
-    let mut raw = [0u8; 80];
+    let mut raw = [0u8; ADOPT_HEADER_LEN];
     if let Some(header) = header {
         let enc = bitcoin::consensus::serialize(&header);
-        if enc.len() == raw.len() {
-            raw.copy_from_slice(&enc);
-        }
+        raw[..enc.len()].copy_from_slice(&enc);
     }
     buf.extend_from_slice(&raw);
 }
@@ -2293,7 +2293,12 @@ fn read_header(raw: &[u8]) -> Option<Header> {
     if raw.iter().all(|b| *b == 0) {
         return None;
     }
-    bitcoin::consensus::deserialize(raw).ok()
+    let len = if raw[3] & 0x80 != 0 {
+        Header::V2_SIZE
+    } else {
+        Header::SIZE
+    };
+    bitcoin::consensus::deserialize(&raw[..len]).ok()
 }
 
 fn write_diff(buf: &mut Vec<u8>, diff: &DiffSnap) {
@@ -2309,9 +2314,17 @@ fn read_diff(bytes: &[u8]) -> Option<DiffSnap> {
         return None;
     }
     let period_height = u32::from_le_bytes(bytes[0..4].try_into().ok()?);
-    let period_header = read_header(&bytes[4..84]);
-    let full_diff_height = u32::from_le_bytes(bytes[84..88].try_into().ok()?);
-    let full_bits = u32::from_le_bytes(bytes[88..92].try_into().ok()?);
+    let period_header = read_header(&bytes[4..4 + ADOPT_HEADER_LEN]);
+    let full_diff_height = u32::from_le_bytes(
+        bytes[4 + ADOPT_HEADER_LEN..8 + ADOPT_HEADER_LEN]
+            .try_into()
+            .ok()?,
+    );
+    let full_bits = u32::from_le_bytes(
+        bytes[8 + ADOPT_HEADER_LEN..12 + ADOPT_HEADER_LEN]
+            .try_into()
+            .ok()?,
+    );
     let full_diff_bits = (full_bits != 0).then_some(CompactTarget::from_consensus(full_bits));
     Some(DiffSnap {
         period_header,
@@ -2544,9 +2557,10 @@ fn parse_adopt(bytes: &[u8]) -> Option<HeaderWalk> {
         return None;
     }
     let n = u32::from_le_bytes(bytes[8..12].try_into().ok()?) as usize;
-    const CKPT: usize = 32 + 4 + 32 + 80 + 1 + 11 * 4 + DIFF_SNAP_LEN;
+    const CKPT: usize = 32 + 4 + 32 + ADOPT_HEADER_LEN + 1 + 11 * 4 + DIFF_SNAP_LEN;
     let body = 12 + n * CKPT;
-    const TAIL: usize = 32 + 32 + 4 + 32 + 80 + 4 + 80 + 4 + 4 + DIFF_SNAP_LEN;
+    const TAIL: usize =
+        32 + 32 + 4 + 32 + ADOPT_HEADER_LEN + 4 + ADOPT_HEADER_LEN + 4 + 4 + DIFF_SNAP_LEN;
     if bytes.len() != body + TAIL {
         return None;
     }
@@ -2561,8 +2575,8 @@ fn parse_adopt(bytes: &[u8]) -> Option<HeaderWalk> {
         let mut work = [0u8; 32];
         work.copy_from_slice(&bytes[off..off + 32]);
         off += 32;
-        let header = read_header(&bytes[off..off + 80]);
-        off += 80;
+        let header = read_header(&bytes[off..off + ADOPT_HEADER_LEN]);
+        off += ADOPT_HEADER_LEN;
         let times = read_times(&bytes[off..off + 1 + 11 * 4])?;
         off += 1 + 11 * 4;
         let diff = read_diff(&bytes[off..off + DIFF_SNAP_LEN])?;
@@ -2588,12 +2602,12 @@ fn parse_adopt(bytes: &[u8]) -> Option<HeaderWalk> {
     let mut base_work = [0u8; 32];
     base_work.copy_from_slice(&bytes[off..off + 32]);
     off += 32;
-    let tip_header = read_header(&bytes[off..off + 80]);
-    off += 80;
+    let tip_header = read_header(&bytes[off..off + ADOPT_HEADER_LEN]);
+    off += ADOPT_HEADER_LEN;
     let period_height = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?);
     off += 4;
-    let period_header = read_header(&bytes[off..off + 80]);
-    off += 80;
+    let period_header = read_header(&bytes[off..off + ADOPT_HEADER_LEN]);
+    off += ADOPT_HEADER_LEN;
     let full_diff_height = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?);
     off += 4;
     let full_bits = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?);
@@ -2732,6 +2746,31 @@ fn renote_stored_path(st: &IbdWorkState, hub: &ChainHub) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Bitcoin Knots `block_header_v2.json`, vector `profile_0_time_offset`.
+    const KNOTS_V2_HEADER_HEX: &str = "000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab";
+
+    #[test]
+    fn adopt_header_slot_holds_classic_and_v2_headers() {
+        let raw = rbitcoin_primitives::hex_decode(KNOTS_V2_HEADER_HEX).unwrap();
+        let v2: Header = bitcoin::consensus::deserialize(&raw).unwrap();
+        let mut classic = v2;
+        classic.v2 = None;
+        let mut buf = Vec::new();
+        write_header(&mut buf, Some(v2));
+        write_header(&mut buf, Some(classic));
+        write_header(&mut buf, None);
+        assert_eq!(buf.len(), 3 * ADOPT_HEADER_LEN);
+        let (a, rest) = buf.split_at(ADOPT_HEADER_LEN);
+        let (b, c) = rest.split_at(ADOPT_HEADER_LEN);
+        assert_eq!(read_header(a), Some(v2));
+        assert_eq!(read_header(b), Some(classic));
+        assert!(
+            b[Header::SIZE..].iter().all(|x| *x == 0),
+            "classic slot is zero-padded"
+        );
+        assert_eq!(read_header(c), None);
+    }
     use super::*;
     use crate::ibd::events::apply_peer_event;
     use crate::ibd::peer_io::{PeerCmd, PeerEvent, PeerSlot};
