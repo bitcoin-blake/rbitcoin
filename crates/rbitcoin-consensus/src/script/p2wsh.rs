@@ -44,13 +44,18 @@ pub(crate) fn verify_with_scripthash(
         return Err(ConsensusError::Script("p2wsh script hash".into()));
     }
 
+    let max_element_size = if job.reduced_data_for(input_index) {
+        interpreter::MAX_SCRIPT_ELEMENT_SIZE_REDUCED
+    } else {
+        interpreter::MAX_SCRIPT_ELEMENT_SIZE
+    };
     let mut stack: Vec<Vec<u8>> = Vec::with_capacity(wit_len.saturating_sub(1));
     for i in 0..wit_len - 1 {
         let item = input
             .witness
             .nth(i)
             .ok_or_else(|| ConsensusError::Script("p2wsh witness".into()))?;
-        if item.len() > interpreter::MAX_SCRIPT_ELEMENT_SIZE {
+        if item.len() > max_element_size {
             return Err(ConsensusError::Script("PUSH_SIZE".into()));
         }
         stack.push(item.to_vec());
@@ -113,9 +118,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(verify(&job, 0, &job.tx).is_err());
 

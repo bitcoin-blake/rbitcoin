@@ -26,6 +26,8 @@ mod core_tx_vectors;
 #[cfg(test)]
 mod core_vectors;
 #[cfg(test)]
+mod rdts_tests;
+#[cfg(test)]
 mod tests_verify;
 
 use bitcoin::hashes::Hash;
@@ -205,8 +207,11 @@ fn verify_native_witness<'a>(
         (1, 32) if job.taproot_active => {
             p2tr::verify(job, input_index, tx, sighash_cache(cache, tx))
         }
+        // Core `IsPayToAnchor`: `OP_1 <0x4e73>` with an empty witness spends
+        // before the upgradable-program check, whatever the flags say.
+        (1, 2) if program == [0x4e, 0x73] && tx.input[input_index].witness.is_empty() => Ok(()),
         _ => {
-            if job.discourage_upgradable_witness {
+            if job.discourage_upgradable_witness || job.reduced_data_for(input_index) {
                 return Err(ConsensusError::Script(
                     "DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM".into(),
                 ));
@@ -703,9 +708,11 @@ mod verify_routing_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         }
     }
 
@@ -754,6 +761,7 @@ mod verify_routing_tests {
             flags: crate::block::ScriptVerifyFlags::buried(true, true, true, true, true),
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let err = verify_job_all_inputs(&job).expect_err("empty prevouts");
         assert!(format!("{err}").contains("prevout count"), "{err}");
@@ -791,9 +799,11 @@ mod verify_routing_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(verify_job_all_inputs(&job).is_ok());
 
@@ -826,9 +836,11 @@ mod verify_routing_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let cache = bitcoin::sighash::SighashCache::new(&*job2.tx);
         let pre = crate::TxPrecompute::from_tx(&job2.tx);
@@ -1005,9 +1017,11 @@ mod verify_routing_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         verify_job_all_inputs(&job).expect("pre-taproot v1 ACS");
     }
@@ -1157,9 +1171,11 @@ mod verify_routing_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         // Bare HASH160 equal of zeros vs hash160([]) — should fail script, not p2sh redeem.
         let err = verify_job_all_inputs(&job).unwrap_err();

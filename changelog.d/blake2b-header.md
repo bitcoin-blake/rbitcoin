@@ -11,10 +11,13 @@ Added
   median-time-past below the expiry), and the unified signature hash: a
   signature whose hash type sets `SIGHASH_UNIFIED` (0x20) is checked
   against Knots' unified message for every script type from the fork
-  height (Knots' 166 vectors and two testnet4 spends pin it). The RDTS
-  script rules (reduced element sizes, no tapscript `OP_IF`, no annex,
-  34-byte output scripts) are not enforced yet, and relay policy does not
-  yet opt in.
+  height (Knots' 166 vectors and two testnet4 spends pin it), and the RDTS
+  script rules while the window is open: 256-byte script elements (the
+  P2SH redeemScript push excepted), no tapscript `OP_IF`/`OP_NOTIF`, no
+  `OP_SUCCESS`, no annex, control blocks of at most 7 nodes, no unknown
+  leaf or witness versions, and output scripts of at most 34 bytes (83 for
+  `OP_RETURN`); inputs that spend pre-fork outputs are exempt, as in Knots.
+  Relay policy does not yet opt in.
 - **Bitcoin Knots v2 block header.** `bitcoin` comes from
   bitcoin-blake/rust-bitcoin (`v2-header`): a header with version bit 31
   carries the 84-byte Knots extension and hashes with the BLAKE2b

@@ -76,9 +76,11 @@ fn make_p2wpkh_spend() -> (ScriptCheckJob, bool) {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     (job, true)
 }
@@ -158,9 +160,11 @@ fn mainnet_508011_nested_p2wpkh_raw_sighash_0x65() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).unwrap_or_else(|e| {
         panic!(
@@ -214,9 +218,11 @@ fn pretaproot_v1_witness_program_anyone_can_spend() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("pre-taproot v1 ACS");
 }
@@ -263,9 +269,11 @@ fn empty_script_pubkey_rejects() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     assert!(
         script::verify_job_all_inputs(&job).is_err(),
@@ -330,9 +338,11 @@ fn p2sh_legacy_multi_push_op_true_accepts() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("p2sh multi-push legacy");
 }
@@ -379,9 +389,11 @@ fn mainnet_block_183_high_s_p2pk_accepts() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("mainnet 183 high-S P2PK must verify");
 }
@@ -432,9 +444,11 @@ fn mainnet_block_110300_sighash_type_zero_p2pkh() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("hashtype 0 P2PKH must verify");
 }
@@ -493,9 +507,11 @@ fn mainnet_block_124276_lax_der_pre_bip66() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("pre-BIP66 lax DER must verify");
 
@@ -660,9 +676,11 @@ fn mainnet_block_170060_pre_bip16_p2sh_as_bare() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("pre-BIP16 P2SH-shape must verify as bare");
 
@@ -726,9 +744,11 @@ fn mainnet_block_163685_scriptsig_codeseparator_checkmultisig() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job)
         .expect("bare CODESEPARATOR+CHECKMULTISIG scriptSig must verify");
@@ -784,9 +804,11 @@ fn mainnet_block_140493_high_bit_s_lax_der_p2pkh() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("pre-BIP66 high-bit-S DER must verify");
 
@@ -884,9 +906,11 @@ fn mainnet_block_443992_p2sh_codeseparator_scriptcode() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job)
         .expect("P2SH redeem with CODESEPARATOR must verify under Core scriptCode rules");
@@ -935,9 +959,11 @@ fn cltv_in_scriptsig_with_op_true_spk_enforced() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     let err = script::verify_job_all_inputs(&job).expect_err("CLTV in scriptSig must run");
     assert!(
@@ -991,9 +1017,11 @@ fn unknown_witness_v16_accepts_without_discourage() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect("unknown v16 ACS without discourage");
 }
@@ -1041,9 +1069,11 @@ fn unknown_witness_v16_malleated_scriptsig() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     let err = script::verify_job_all_inputs(&job).expect_err("malleated");
     assert!(
@@ -1096,9 +1126,11 @@ fn unknown_witness_v16_discourage_rejects() {
             discourage_upgradable_witness: true,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     let err = script::verify_job_all_inputs(&job).expect_err("discourage");
     assert!(format!("{err}").contains("DISCOURAGE"), "got {err}");
@@ -1153,9 +1185,11 @@ fn p2wsh_oversized_witness_element_rejected() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     let err = script::verify_job_all_inputs(&job).expect_err("oversized element");
     let s = format!("{err}");
@@ -1224,9 +1258,11 @@ fn p2wsh_witness_script_larger_than_520_is_valid() {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     };
     script::verify_job_all_inputs(&job).expect(
         "P2WSH witnessScript >520 must verify (Core ExecuteWitnessScript after SpanPopBack)",

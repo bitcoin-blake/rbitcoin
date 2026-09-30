@@ -807,6 +807,10 @@ pub struct ScriptVerifyFlags {
     /// `SIGHASH_UNIFIED` is checked against the unified message. A switch, not a
     /// restriction: on from the BLAKE2b fork height.
     pub unified_sighash: bool,
+    /// Knots `REDUCED_DATA_MANDATORY_VERIFY_FLAGS` (BIP110 rules as consensus)
+    /// while RDTS is active. Inputs that spend pre-fork outputs are exempt per
+    /// input ([`ScriptCheckJob::reduced_data_for`]).
+    pub reduced_data: bool,
 }
 
 impl ScriptVerifyFlags {
@@ -835,12 +839,13 @@ impl ScriptVerifyFlags {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
         }
     }
 
     /// Activation + BIP141/147 defaults at `ctx` (BIP16 is caller MTP).
     #[inline]
-    pub fn consensus_at(ctx: &ValidationContext<'_>, bip16_active: bool) -> Self {
+    pub fn consensus_at(ctx: &ValidationContext<'_>, bip16_active: bool, prev_mtp: u32) -> Self {
         let h = ctx.height.0;
         let segwit = ctx.params.segwit_active_at(h);
         Self {
@@ -860,6 +865,7 @@ impl ScriptVerifyFlags {
             discourage_upgradable_witness: false,
             const_scriptcode: false,
             unified_sighash: ctx.params.blake2b_active_at(h),
+            reduced_data: ctx.params.rdts_active_at(h, prev_mtp),
         }
     }
 }
@@ -880,6 +886,9 @@ pub struct ScriptCheckJob {
     pub(crate) pre: std::sync::OnceLock<JobPre>,
     /// Unified-sighash aggregates, computed on the first opted-in signature.
     pub(crate) unified_agg: std::sync::OnceLock<crate::script::unified_sighash::UnifiedAggregates>,
+    /// Inputs exempt from the RDTS script rules (they spend pre-fork outputs).
+    /// Empty means none.
+    pub(crate) rdts_exempt: Vec<bool>,
 }
 
 impl Deref for ScriptCheckJob {
@@ -951,7 +960,14 @@ impl ScriptCheckJob {
             flags,
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         }
+    }
+
+    /// Whether the RDTS script rules apply to `input_index`: the job's flag,
+    /// unless that input spends an output created before the fork.
+    pub(crate) fn reduced_data_for(&self, input_index: usize) -> bool {
+        self.flags.reduced_data && !self.rdts_exempt.get(input_index).copied().unwrap_or(false)
     }
 
     /// Confirm assemble: `slice[idx]` by refcount only (no `TxPrecompute` clone).
@@ -1090,7 +1106,7 @@ pub(crate) fn assemble_block_prevouts(
         bip16_active_from_prev_mtp(ctx.params, ctx.height.0, block_hash, prev_mtp)
     );
     let _ = block_hash; // used in debug_assert; release keeps caller contract
-    let flags = ScriptVerifyFlags::consensus_at(ctx, bip16_active);
+    let flags = ScriptVerifyFlags::consensus_at(ctx, bip16_active, prev_mtp);
 
     let n_tx = block.txdata.len();
     let mut txid_index: TxidMap<usize> =
@@ -1171,6 +1187,9 @@ pub(crate) fn assemble_block_prevouts(
     acc.flush(query.confirm_stats());
     rbitcoin_query::note_confirm(&query.confirm_stats().asm_prevout_ns, clk_prev);
     rbitcoin_query::note_confirm(&query.confirm_stats().asm_job_ns, clk_job);
+    if flags.reduced_data {
+        mark_rdts_exempt_inputs(query, ctx, &spends, &mut script_jobs)?;
+    }
     Ok((script_jobs, spends, fees, tx_fees))
 }
 
@@ -1435,6 +1454,93 @@ fn assemble_non_cb_inputs(
         }
     }
     Ok((value_in, prevouts, tx_in_sigops))
+}
+
+/// Knots `ConnectBlock`: an input whose prevout was created before the fork
+/// height is checked without `REDUCED_DATA_MANDATORY_VERIFY_FLAGS`. `spends`
+/// lists every non-coinbase input in block order; `jobs` are the same
+/// transactions' script jobs in the same order. A create not yet durable was
+/// made in this run, so at or after the fork.
+fn mark_rdts_exempt_inputs(
+    query: &Query,
+    ctx: &ValidationContext<'_>,
+    spends: &[(
+        [u8; 32],
+        u32,
+        rbitcoin_primitives::Fk,
+        rbitcoin_primitives::Fk,
+        u32,
+    )],
+    jobs: &mut [ScriptCheckJob],
+) -> Result<(), ConsensusError> {
+    let Some(fork) = ctx.params.blake2b_fork_height() else {
+        return Ok(());
+    };
+    let mut fks: Vec<rbitcoin_primitives::Fk> = spends
+        .iter()
+        .map(|&(_, _, _, cfk, _)| cfk)
+        .filter(|fk| !fk.is_null())
+        .collect();
+    fks.sort_unstable_by_key(|f| f.0);
+    fks.dedup();
+    let heights = query
+        .store()
+        .tx_height_get_batch(&fks)
+        .map_err(ConsensusError::from)?;
+    let pre_fork: FkMap<()> = fks
+        .iter()
+        .zip(heights)
+        .filter(|(_, h)| h.is_some_and(|h| h < fork))
+        .map(|(fk, _)| (*fk, ()))
+        .collect();
+    if pre_fork.is_empty() {
+        return Ok(());
+    }
+    let mut si = 0usize;
+    for job in jobs.iter_mut() {
+        let n_in = job.prevouts.len();
+        let tx_spends = spends.get(si..si + n_in).ok_or(ConsensusError::BadBlock(
+            "structural spends/tx input mismatch",
+        ))?;
+        si += n_in;
+        if tx_spends
+            .iter()
+            .any(|&(_, _, _, cfk, _)| pre_fork.contains_key(&cfk))
+        {
+            job.rdts_exempt = tx_spends
+                .iter()
+                .map(|&(_, _, _, cfk, _)| pre_fork.contains_key(&cfk))
+                .collect();
+        }
+    }
+    Ok(())
+}
+
+/// Knots `CheckOutputSizes` (`CheckTxInputs` with `OutputSizeLimit`, and the
+/// generation tx): while RDTS is active no output script is longer than
+/// 34 bytes, or 83 when it starts with `OP_RETURN`. Empty scripts pass.
+pub fn check_rdts_output_sizes(
+    params: &ChainParams,
+    height: u32,
+    prev_mtp: u32,
+    block: &Block,
+) -> Result<(), ConsensusError> {
+    if !params.rdts_active_at(height, prev_mtp) {
+        return Ok(());
+    }
+    for tx in &block.txdata {
+        for out in &tx.output {
+            let spk = out.script_pubkey.as_bytes();
+            if spk.is_empty() {
+                continue;
+            }
+            let max = if spk[0] == 0x6a { 83 } else { 34 };
+            if spk.len() > max {
+                return Err(ConsensusError::BadBlock("bad-txns-vout-script-toolarge"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_coinbase_subsidy(

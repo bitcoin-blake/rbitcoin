@@ -36,6 +36,10 @@ pub(crate) fn verify(
         return Err(ConsensusError::Script("p2tr empty witness".into()));
     }
 
+    // RDTS: the annex is invalid on either path (Knots reports PUSH_SIZE).
+    if job.reduced_data_for(input_index) && bip341_annex(&input.witness).is_some() {
+        return Err(ConsensusError::Script("PUSH_SIZE".into()));
+    }
     // Key-path: one element, or sig + annex (BIP341: annex = last stack item
     // starting with 0x50 when there are ≥2 items).
     if wit_len == 1 || (wit_len == 2 && bip341_annex(&input.witness).is_some()) {
@@ -137,19 +141,22 @@ const TAPSCRIPT_LEAF: u8 = 0xc0;
 const CONTROL_BASE: usize = 33;
 const CONTROL_NODE: usize = 32;
 const CONTROL_MAX_NODES: usize = 128;
+/// Knots `TAPROOT_CONTROL_MAX_NODE_COUNT_REDUCED` (RDTS).
+const CONTROL_MAX_NODES_REDUCED: usize = 7;
 
 /// BIP341 commitment. Returns the even leaf version byte.
 fn verify_control_commitment(
     control: &[u8],
     output_key_bytes: &[u8],
     script: &Script,
+    max_nodes: usize,
 ) -> Result<u8, ConsensusError> {
     if control.len() < CONTROL_BASE {
         return Err(ConsensusError::Script("TAPROOT_WRONG_CONTROL_SIZE".into()));
     }
     let extra = control.len() - CONTROL_BASE;
     let nodes = extra / CONTROL_NODE;
-    if !extra.is_multiple_of(CONTROL_NODE) || nodes > CONTROL_MAX_NODES {
+    if !extra.is_multiple_of(CONTROL_NODE) || nodes > max_nodes {
         return Err(ConsensusError::Script("TAPROOT_WRONG_CONTROL_SIZE".into()));
     }
     let leaf = control[0] & 0xfe;
@@ -212,10 +219,16 @@ fn verify_script_path(
     let script = Script::from_bytes(&script_bytes);
     // Leaf byte is raw consensus (`c[0] & 0xfe`). `LeafVersion::from_consensus`
     // rejects 0x50, which Core accepts as a future leaf.
-    let leaf = verify_control_commitment(&control_bytes, output_key_bytes, script)?;
+    let reduced = job.reduced_data_for(input_index);
+    let max_nodes = if reduced {
+        CONTROL_MAX_NODES_REDUCED
+    } else {
+        CONTROL_MAX_NODES
+    };
+    let leaf = verify_control_commitment(&control_bytes, output_key_bytes, script, max_nodes)?;
 
     if leaf != TAPSCRIPT_LEAF {
-        if job.flags.discourage_upgradable_witness {
+        if job.flags.discourage_upgradable_witness || reduced {
             return Err(ConsensusError::Script(
                 "DISCOURAGE_UPGRADABLE_TAPROOT_VERSION".into(),
             ));
@@ -249,6 +262,59 @@ mod bip341_tests {
     /// Single-leaf tree: leaf script `OP_TRUE`, empty initial stack.
     fn make_script_path_spend() -> (ScriptCheckJob, ControlBlock) {
         make_script_path_spend_with(&[0x51], &[])
+    }
+
+    fn rdts_err(job: &ScriptCheckJob) -> String {
+        format!(
+            "{}",
+            script::verify_job_all_inputs(job).expect_err("RDTS rejects")
+        )
+    }
+
+    /// Knots RDTS in tapscript: no OP_SUCCESS, no OP_IF/OP_NOTIF, initial elements
+    /// ≤ 256, and a pre-fork input is exempt from all of it.
+    #[test]
+    fn rdts_tapscript_rules() {
+        let (mut job, _) = make_script_path_spend_with(&[0x50], &[]);
+        script::verify_job_all_inputs(&job).expect("OP_SUCCESS without RDTS");
+        job.reduced_data = true;
+        assert!(rdts_err(&job).contains("DISCOURAGE_OP_SUCCESS"));
+        job.rdts_exempt = vec![true];
+        script::verify_job_all_inputs(&job).expect("pre-fork input is exempt");
+
+        let one = vec![0x01u8];
+        let (mut job, _) = make_script_path_spend_with(&[0x63, 0x51, 0x68], &[one.as_slice()]);
+        script::verify_job_all_inputs(&job).expect("OP_IF without RDTS");
+        job.reduced_data = true;
+        assert!(rdts_err(&job).contains("TAPSCRIPT_MINIMALIF"));
+
+        let big = vec![0u8; 300];
+        let (mut job, _) = make_script_path_spend_with(&[0x75], &[one.as_slice(), big.as_slice()]);
+        script::verify_job_all_inputs(&job).expect("300-byte element without RDTS");
+        job.reduced_data = true;
+        assert!(rdts_err(&job).contains("PUSH_SIZE"));
+    }
+
+    /// Knots RDTS: control blocks carry at most 7 nodes (size is checked before
+    /// the commitment), unknown leaf versions and the annex are invalid.
+    #[test]
+    fn rdts_control_size_leaf_version_and_annex() {
+        let (mut job, control) = make_script_path_spend();
+        let mut long = control.serialize();
+        long.extend_from_slice(&[0x11u8; 32 * 8]);
+        let wit: Vec<Vec<u8>> = vec![vec![0x51], long];
+        let refs: Vec<&[u8]> = wit.iter().map(|v| v.as_slice()).collect();
+        job.tx = crate::block::JobTx::owned({
+            let mut tx = (*job.tx).clone();
+            tx.input[0].witness = Witness::from_slice(&refs);
+            tx
+        });
+        assert!(
+            rdts_err(&job).contains("WITNESS_PROGRAM_MISMATCH"),
+            "8 nodes: size ok, commitment fails"
+        );
+        job.reduced_data = true;
+        assert!(rdts_err(&job).contains("TAPROOT_WRONG_CONTROL_SIZE"));
     }
 
     fn make_script_path_spend_with(
@@ -316,9 +382,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         (job, control)
     }
@@ -399,14 +467,26 @@ mod bip341_tests {
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
                     unified_sighash: false,
+                    reduced_data: false,
                 },
                 pre: std::sync::OnceLock::new(),
                 unified_agg: std::sync::OnceLock::new(),
+                rdts_exempt: Vec::new(),
             }
         }
 
         script::verify_job_all_inputs(&job_for(0xc2, false)).expect("leaf 0xc2");
         script::verify_job_all_inputs(&job_for(0x50, true)).expect("leaf 0x50 with annex");
+        // RDTS: neither is allowed.
+        let mut j = job_for(0xc2, false);
+        j.reduced_data = true;
+        assert!(rdts_err(&j).contains("DISCOURAGE_UPGRADABLE_TAPROOT_VERSION"));
+        let mut j = job_for(0x50, true);
+        j.reduced_data = true;
+        assert!(
+            rdts_err(&j).contains("PUSH_SIZE"),
+            "annex is invalid under RDTS"
+        );
     }
 
     /// Core ExecuteWitnessScript (TAPSCRIPT): initial stack > 1000 is
@@ -621,9 +701,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         assert!(verify(&job, 0, &job.tx, &mut cache).is_err());
@@ -694,9 +776,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         script::verify_job_all_inputs(&job).expect("p2tr key path");
     }
@@ -762,9 +846,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let err = script::verify_job_all_inputs(&job).expect_err("0x00 sighash must fail");
         let msg = format!("{err}");
@@ -850,9 +936,11 @@ mod bip341_tests {
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
                     unified_sighash: false,
+                    reduced_data: false,
                 },
                 pre: std::sync::OnceLock::new(),
                 unified_agg: std::sync::OnceLock::new(),
+                rdts_exempt: Vec::new(),
             };
             let err = script::verify_job_all_inputs(&job).unwrap_err();
             assert!(
@@ -896,9 +984,11 @@ mod bip341_tests {
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
                     unified_sighash: false,
+                    reduced_data: false,
                 },
                 pre: std::sync::OnceLock::new(),
                 unified_agg: std::sync::OnceLock::new(),
+                rdts_exempt: Vec::new(),
             };
             script::verify_job_all_inputs(&job).expect("key path + annex");
         }
@@ -972,9 +1062,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         script::verify_job_all_inputs(&job).expect("empty annex payload");
     }
@@ -1072,9 +1164,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         script::verify_job_all_inputs(&job).expect("script path + annex CHECKSIG");
     }
@@ -1160,9 +1254,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         script::verify_job_all_inputs(&job).expect("two-leaf script path");
     }
@@ -1284,9 +1380,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         script::verify_job_all_inputs(&job).expect("CODESEPARATOR chain must verify");
     }
@@ -1339,9 +1437,11 @@ mod bip341_tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(script::verify_job_all_inputs(&job).is_err());
     }

@@ -31,6 +31,8 @@ use rbitcoin_primitives::{scriptnum_decode, scriptnum_decode_width, scriptnum_en
 const MAX_STACK_SIZE: usize = 1000;
 /// Push / witness stack item cap.
 pub(crate) const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
+/// Knots `MAX_SCRIPT_ELEMENT_SIZE_REDUCED` (RDTS).
+pub(crate) const MAX_SCRIPT_ELEMENT_SIZE_REDUCED: usize = 256;
 /// BIP342 `VALIDATION_WEIGHT_OFFSET` / `VALIDATION_WEIGHT_PER_SIGOP_PASSED`.
 const TAPSCRIPT_VALIDATION_WEIGHT_OFFSET: i64 = 50;
 const TAPSCRIPT_VALIDATION_WEIGHT_PER_SIGOP: i64 = 50;
@@ -177,6 +179,9 @@ pub(crate) struct EvalContext<'a> {
     pub const_scriptcode: bool,
     /// Knots unified sighash: opted-in signatures use the unified message.
     pub unified_sighash: bool,
+    /// Knots `SCRIPT_VERIFY_REDUCED_DATA` for this input: 256-byte elements, no
+    /// tapscript `OP_IF`/`OP_NOTIF`, no `OP_SUCCESS`, no annex, small control blocks.
+    pub reduced_data: bool,
     /// The job's shared aggregates (`None` in fixture contexts: computed per call).
     unified_agg: Option<&'a std::sync::OnceLock<super::unified_sighash::UnifiedAggregates>>,
     /// BIP342: instruction index of last executed OP_CODESEPARATOR, or `0xFFFFFFFF`.
@@ -278,6 +283,7 @@ impl<'a> EvalContext<'a> {
             witness_pubkeytype: false,
             const_scriptcode: false,
             unified_sighash: false,
+            reduced_data: false,
             unified_agg: None,
             codeseparator_pos: Cell::new(0xFFFF_FFFF),
             codeseparator_script_off: Cell::new(None),
@@ -287,9 +293,19 @@ impl<'a> EvalContext<'a> {
         }
     }
 
+    /// `MAX_SCRIPT_ELEMENT_SIZE`, or Knots' reduced limit under RDTS.
+    pub(crate) fn max_element_size(&self) -> usize {
+        if self.reduced_data {
+            MAX_SCRIPT_ELEMENT_SIZE_REDUCED
+        } else {
+            MAX_SCRIPT_ELEMENT_SIZE
+        }
+    }
+
     /// Copy standardness / fixture flags from a [`crate::block::ScriptCheckJob`].
     pub(crate) fn apply_job_flags(mut self, job: &'a crate::block::ScriptCheckJob) -> Self {
         self.unified_sighash = job.unified_sighash;
+        self.reduced_data = job.reduced_data_for(self.input_index);
         self.unified_agg = Some(&job.unified_agg);
         self.minimal_data = job.minimal_data;
         self.nullfail = job.nullfail;
@@ -404,14 +420,18 @@ pub(crate) fn eval_script(
     // BIP342: OP_SUCCESSx anywhere in tapscript → unconditional success *before*
     // size / stack limits (even unparseable tails pass).
     if ctx.sig_version == SigVersion::TapScript && tapscript_has_op_success(script) {
+        if ctx.reduced_data {
+            return Err(ConsensusError::Script("DISCOURAGE_OP_SUCCESS".into()));
+        }
         return Ok(false);
     }
+    let max_element_size = ctx.max_element_size();
     if ctx.sig_version == SigVersion::TapScript {
         if stack.len() > MAX_STACK_SIZE {
             return Err(ConsensusError::Script("stack size".into()));
         }
         for item in stack.iter() {
-            if item.len() > MAX_SCRIPT_ELEMENT_SIZE {
+            if item.len() > max_element_size {
                 return Err(ConsensusError::Script("PUSH_SIZE".into()));
             }
         }
@@ -443,7 +463,7 @@ pub(crate) fn eval_script(
             Instruction::PushBytes(b) => {
                 // Core: MAX_SCRIPT_ELEMENT_SIZE even in unexecuted branches.
                 let data = b.as_bytes();
-                if data.len() > MAX_SCRIPT_ELEMENT_SIZE {
+                if data.len() > max_element_size {
                     return Err(ConsensusError::Script("push too large".into()));
                 }
                 // Core MINIMALDATA: CheckMinimalPush only when the push executes
@@ -479,6 +499,10 @@ pub(crate) fn eval_script(
                             if minimal_if && !is_minimal_if_arg(&v) {
                                 return Err(ConsensusError::Script("MINIMALIF".into()));
                             }
+                            // RDTS bans OP_IF in tapscript outright (Knots reuses MINIMALIF).
+                            if ctx.reduced_data && ctx.sig_version == SigVersion::TapScript {
+                                return Err(ConsensusError::Script("TAPSCRIPT_MINIMALIF".into()));
+                            }
                             cond = cast_to_bool(&v);
                         }
                         if_stack.push(executing && cond);
@@ -490,6 +514,9 @@ pub(crate) fn eval_script(
                             let v = pop(stack)?;
                             if minimal_if && !is_minimal_if_arg(&v) {
                                 return Err(ConsensusError::Script("MINIMALIF".into()));
+                            }
+                            if ctx.reduced_data && ctx.sig_version == SigVersion::TapScript {
+                                return Err(ConsensusError::Script("TAPSCRIPT_MINIMALIF".into()));
                             }
                             cond = !cast_to_bool(&v);
                         }

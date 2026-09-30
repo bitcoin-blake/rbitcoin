@@ -244,9 +244,11 @@ fn flags_to_job(tx: Transaction, prevouts: Vec<TxOut>, flags: &TxFlags) -> Scrip
             discourage_upgradable_witness: flags.discourage_upgradable_witness,
             const_scriptcode: flags.const_scriptcode,
             unified_sighash: false,
+            reduced_data: false,
         },
         pre: std::sync::OnceLock::new(),
         unified_agg: std::sync::OnceLock::new(),
+        rdts_exempt: Vec::new(),
     }
 }
 

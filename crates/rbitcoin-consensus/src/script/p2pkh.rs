@@ -144,9 +144,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         let err = verify(&job, 0, &job.tx, &mut cache).unwrap_err();

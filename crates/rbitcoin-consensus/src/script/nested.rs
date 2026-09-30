@@ -91,6 +91,15 @@ pub(crate) fn verify_p2sh_legacy(
     }
     let redeem = stack.pop().unwrap();
     check_p2sh_redeem_hash(job.prevouts[input_index].script_pubkey.as_bytes(), &redeem)?;
+    // RDTS: the scriptSig ran without the reduced limit so the redeemScript
+    // push could pass; every other push is held to it here.
+    if job.reduced_data_for(input_index)
+        && stack
+            .iter()
+            .any(|e| e.len() > interpreter::MAX_SCRIPT_ELEMENT_SIZE_REDUCED)
+    {
+        return Err(ConsensusError::Script("PUSH_SIZE".into()));
+    }
 
     let redeem_script = Script::from_bytes(&redeem);
     let ctx = EvalContext::from_job(job, tx, input_index, redeem_script, SigVersion::Base);
@@ -123,7 +132,9 @@ pub(crate) fn p2sh_script_sig_stack(
     tx: &Transaction,
 ) -> Result<Vec<Vec<u8>>, ConsensusError> {
     let script_sig = tx.input[input_index].script_sig.as_script();
-    let ctx = EvalContext::from_job(job, tx, input_index, script_sig, SigVersion::Base);
+    let mut ctx = EvalContext::from_job(job, tx, input_index, script_sig, SigVersion::Base);
+    // Knots evaluates the P2SH scriptSig with SCRIPT_VERIFY_REDUCED_DATA cleared.
+    ctx.reduced_data = false;
     let mut stack = Vec::new();
     let _ = interpreter::eval_script(script_sig, &mut stack, &ctx)?;
     if !script_is_push_only(script_sig) {
@@ -218,9 +229,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         }
     }
 
@@ -511,9 +524,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         let r = try_nested(&job, &mut cache, &crate::TxPrecompute::from_tx(&job.tx));
@@ -544,9 +559,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut cache2 = SighashCache::new(&*job2.tx);
         assert!(matches!(
@@ -588,9 +605,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut c3 = SighashCache::new(&*job3.tx);
         assert!(matches!(
@@ -622,9 +641,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut c4 = SighashCache::new(&*job4.tx);
         assert!(matches!(
@@ -659,9 +680,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut c5 = SighashCache::new(&*job5.tx);
         assert!(try_nested(&job5, &mut c5, &crate::TxPrecompute::from_tx(&job5.tx)).is_none());
@@ -694,9 +717,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(verify_legacy(&job_e).is_err());
         // Hash mismatch on legacy
@@ -726,9 +751,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(verify_legacy(&job_h).is_err());
     }
@@ -769,9 +796,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         // Empty witness → p2wsh fails, but nested path reached scripthash copy + call.
         let mut c = SighashCache::new(&*job.tx);
@@ -813,9 +842,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         let mut cache = SighashCache::new(&*job2.tx);
         assert!(matches!(
@@ -854,9 +885,11 @@ mod tests {
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
                 unified_sighash: false,
+                reduced_data: false,
             },
             pre: std::sync::OnceLock::new(),
             unified_agg: std::sync::OnceLock::new(),
+            rdts_exempt: Vec::new(),
         };
         assert!(verify_legacy(&job3).is_ok());
 

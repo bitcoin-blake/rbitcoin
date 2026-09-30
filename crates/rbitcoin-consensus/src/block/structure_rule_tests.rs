@@ -2575,3 +2575,37 @@ fn rdts_weight_cap_applies_from_the_fork_until_expiry() {
     );
     assert!(check_rdts_weight(&ChainParams::testnet4(), fork, 0, 4_000_000).is_ok());
 }
+
+#[test]
+fn rdts_output_scripts_are_34_bytes_or_83_for_op_return() {
+    use crate::block::check_rdts_output_sizes;
+    use crate::params::TESTNET4_BLAKE2B;
+    let t4b = ChainParams::testnet4_blake2b();
+    let fork = TESTNET4_BLAKE2B.fork_height;
+    let active = TESTNET4_BLAKE2B.rdts_expiry - 1;
+    let block_with_spk = |spk: Vec<u8>| {
+        let mut cb = coinbase(fork);
+        cb.output.push(TxOut {
+            value: Amount::from_sat(0),
+            script_pubkey: ScriptBuf::from_bytes(spk),
+        });
+        block_with(vec![cb])
+    };
+    let ok = |spk: Vec<u8>| check_rdts_output_sizes(&t4b, fork, active, &block_with_spk(spk));
+    assert!(ok(vec![0x51; 34]).is_ok());
+    assert_bad_block(
+        ok(vec![0x51; 35]).unwrap_err(),
+        "bad-txns-vout-script-toolarge",
+    );
+    let mut ret = vec![0x6a];
+    ret.extend_from_slice(&[0x00; 82]);
+    assert!(ok(ret.clone()).is_ok(), "83-byte OP_RETURN");
+    ret.push(0x00);
+    assert_bad_block(ok(ret).unwrap_err(), "bad-txns-vout-script-toolarge");
+    assert!(ok(Vec::new()).is_ok(), "empty scripts pass");
+    // Inactive: before the fork, after expiry, or on a SHA256d chain.
+    let big = block_with_spk(vec![0x51; 200]);
+    assert!(check_rdts_output_sizes(&t4b, fork - 1, active, &big).is_ok());
+    assert!(check_rdts_output_sizes(&t4b, fork, TESTNET4_BLAKE2B.rdts_expiry, &big).is_ok());
+    assert!(check_rdts_output_sizes(&ChainParams::testnet4(), fork, active, &big).is_ok());
+}
