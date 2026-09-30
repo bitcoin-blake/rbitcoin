@@ -1,3 +1,68 @@
+# rbitcoin — the Bitcoin Knots BLAKE2b chains
+
+This is [bitcoin-blake](https://github.com/bitcoin-blake)'s fork of
+[reardencode/rbitcoin](https://github.com/reardencode/rbitcoin), a Bitcoin full
+node in Rust, taught the Bitcoin Knots BLAKE2b hardfork chains
+(`v29.4.1.knots20260508`). It is a second, independent implementation of the
+fork's consensus rules, with rbitcoin's relational archive and in-process
+Electrum/Esplora behind it. The upstream README follows below; everything in it
+about mainnet, signet and regtest still holds.
+
+| network | alias | history | first v2 block |
+|---|---|---|---|
+| `mainnet-blake2b` | `xbt` | mainnet to 961,639 | 961,640 |
+| `testnet4-blake2b` | `txbt4` | testnet4 to 150,307 | 150,308 |
+
+Plain `testnet4` (Core's chain, BIP94) is also new here; upstream has no testnet4.
+
+**What is implemented** (branch `blake2b`): the 164-byte v2 header and its
+BLAKE2b proof of work (in a patched rust-bitcoin,
+[bitcoin-blake/rust-bitcoin `v2-header`](https://github.com/bitcoin-blake/rust-bitcoin/tree/v2-header),
+checked against Knots' vectors); schema **27** header rows; v2 exactly from the
+fork height, the header height field, the reserved flag bits, the one-off
+target shift, the tx count in the header, the mainnet fork-block headline and
+the three mainnet fork checkpoints; the 800,000 WU cap, the RDTS script rules
+and the 34-byte output scripts while RDTS is active; and the unified signature
+hash (`SIGHASH_UNIFIED`, Knots' 166 vectors). A fresh `testnet4-blake2b` sync
+from genesis, every script checked, reaches Knots' tip with the same best-block
+hash in under four minutes from a local peer.
+
+**Not yet**: relay policy on the fork chains (the mempool does not opt in to
+the unified sighash or apply RDTS as policy), `getblocktemplate` / `submitblock`
+/ the SV2 template provider for v2 blocks, and Electrum/Esplora serving 164-byte
+headers. Run it as a validating, archiving, RPC node behind a Knots peer, not as
+a mining or wallet backend, until those land. The fork is not offered upstream.
+
+```bash
+cargo build --release -p rbitcoin-node -p rbitcoin-cli
+./target/release/rbitcoin-node --network testnet4-blake2b --datadir ~/rbitcoin-txbt4 \
+    --connect 127.0.0.1:48343 --no-seeds --rpc --milestone 0
+./target/release/rbitcoin-cli --rpc-socket ~/rbitcoin-txbt4/rpc.sock getblockchaininfo
+```
+
+`--connect` names a Knots node (Knots keeps testnet4's magic and port 48333, so
+Core's testnet4 peers connect too and are dropped at 150,308 by the v2 rule);
+drop `--no-seeds` to use Knots' DNS seeds. Use a **release** build: a debug
+build verifies scripts at about two blocks a second. `--milestone 0` checks
+every script; `mainnet-blake2b` keeps upstream's mainnet default (840,000,
+anchored) since the history below the fork is mainnet's.
+
+**Disk**: the archive holds the whole history, txindex-equivalent. `testnet4-blake2b`
+is about **14 GB** at the tip (8.6 GB of that is `seqsigwit`, the scriptSig/witness
+store, which `--datadir-cold` can put on a slower volume), roughly what a Knots
+node with `txindex=1` uses, growing with the chain and not with time. The
+post-fork chain is small (blocks are capped at 800,000 WU while RDTS is active).
+`mainnet-blake2b` is mainnet's history plus a small tail: the ~200 GB hot /
+~700 GB total in the upstream section below.
+
+A schema-26 datadir from upstream is widened to 27 on open; a datadir synced as
+`testnet4` can be reopened as `testnet4-blake2b` (same genesis) and continues
+past the fork. Changes are listed in
+[`changelog.d/blake2b-header.md`](./changelog.d/blake2b-header.md) and
+[`changelog.d/network-testnet4.md`](./changelog.d/network-testnet4.md).
+
+---
+
 # rbitcoin
 
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/reardencode/rbitcoin/badges/coverage.json)](TESTING.md)
