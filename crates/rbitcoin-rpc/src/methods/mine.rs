@@ -110,6 +110,15 @@ pub(crate) fn hashes_json(hashes: &[BlockHash]) -> Value {
 }
 
 pub(crate) fn mempool_block_txs(ctx: &RpcContext) -> Vec<(Transaction, Selected)> {
+    mempool_block_txs_within(ctx, 4_000_000)
+}
+
+/// Template selection under a block weight limit smaller than the usual
+/// 4,000,000 (RDTS), keeping the same coinbase reserve.
+pub(crate) fn mempool_block_txs_within(
+    ctx: &RpcContext,
+    weight_limit: u64,
+) -> Vec<(Transaction, Selected)> {
     let min = ctx
         .chain
         .as_ref()
@@ -117,7 +126,14 @@ pub(crate) fn mempool_block_txs(ctx: &RpcContext) -> Vec<(Transaction, Selected)
         .unwrap_or(1);
     ctx.mempool
         .as_ref()
-        .map(|mp| mp.select_block_template(mp.template_budget(min)))
+        .map(|mp| {
+            let mut budget = mp.template_budget(min);
+            let reserve = 4_000_000u64.saturating_sub(budget.max_weight_wu);
+            budget.max_weight_wu = budget
+                .max_weight_wu
+                .min(weight_limit.saturating_sub(reserve));
+            mp.select_block_template(budget)
+        })
         .unwrap_or_default()
 }
 
@@ -513,7 +529,7 @@ pub(crate) fn gbt_rules(req: Option<&Value>) -> Result<Vec<String>, Value> {
 pub(crate) fn getblocktemplate(ctx: &RpcContext, params: &RpcParams) -> Result<Value, Value> {
     params.reject_unknown(&["template_request"])?;
     let req = params.get(0, "template_request");
-    let _rules = gbt_rules(req)?;
+    let rules = gbt_rules(req)?;
     let mode = req
         .and_then(Value::as_object)
         .and_then(|o| o.get("mode"))
@@ -528,7 +544,7 @@ pub(crate) fn getblocktemplate(ctx: &RpcContext, params: &RpcParams) -> Result<V
             {
                 gbt_longpoll_wait(ctx, lp);
             }
-            gbt_template(ctx)
+            gbt_template(ctx, &rules)
         }
         "proposal" => gbt_proposal(ctx, req),
         other => Err(rpc_error(
@@ -579,7 +595,10 @@ pub(crate) fn gbt_longpoll_id(ctx: &RpcContext) -> String {
     format!("{tip}{updates}")
 }
 
-pub fn gbt_template(ctx: &RpcContext) -> Result<Value, Value> {
+/// `client_rules` is the request's `rules` array. Past the BLAKE2b fork the
+/// template is a v2 block and needs the client to have named `blake2b`
+/// (Knots: "Support for 'blake2b' rule requires explicit client support").
+pub fn gbt_template(ctx: &RpcContext, client_rules: &[String]) -> Result<Value, Value> {
     let tip_h = ctx.query.tip_height().map(|h| h.0).unwrap_or(0);
     let next_h = tip_h.saturating_add(1);
     let (prev_hex, tip_time, tip_bits) = if let Some(h) = ctx.query.tip_height() {
@@ -629,7 +648,20 @@ pub fn gbt_template(ctx: &RpcContext) -> Result<Value, Value> {
     } else {
         rbitcoin_consensus::median_time_past(ctx.query.as_ref(), Height(tip_h)).unwrap_or(tip_time)
     };
-    let selected = mempool_block_txs(ctx);
+    let v2 = params.blake2b_active_at(next_h);
+    if v2 && !client_rules.iter().any(|r| r == "blake2b") {
+        return Err(rpc_error(
+            ERR_INVALID_PARAMETER,
+            "Support for 'blake2b' rule requires explicit client support",
+        ));
+    }
+    let rdts = params.rdts_active_at(next_h, mintime);
+    let weightlimit: u64 = if rdts {
+        rbitcoin_consensus::RDTS_MAX_BLOCK_WEIGHT
+    } else {
+        4_000_000
+    };
+    let selected = mempool_block_txs_within(ctx, weightlimit);
     let mut fees = 0u64;
     let mut tx_json = Vec::with_capacity(selected.len());
     let ids: Vec<Txid> = selected.iter().map(|(_, s)| s.txid).collect();
@@ -662,13 +694,24 @@ pub fn gbt_template(ctx: &RpcContext) -> Result<Value, Value> {
         .map(|(tx, _)| tx.compute_wtxid().to_byte_array())
         .collect();
     let witness_commit = rbitcoin_consensus::witness_commitment_script(wtxids, &[0u8; 32]);
+    // Knots `GetCompleteVersion`: the base version, with bit 31 for a v2 header.
+    let base_version = ctx
+        .chain
+        .as_ref()
+        .map(|c| c.gbt_block_version())
+        .unwrap_or(GBT_VERSION | (1 << 28)) as u32;
+    let version = if v2 {
+        base_version | bitcoin::block::Header::V2_VERSION_FLAG
+    } else {
+        base_version
+    };
+    let mut rules = vec![json!("segwit")];
+    if v2 {
+        rules.push(json!("!blake2b"));
+    }
     Ok(json!({
         "capabilities": ["proposal"],
-        "version": ctx
-            .chain
-            .as_ref()
-            .map(|c| c.gbt_block_version())
-            .unwrap_or(GBT_VERSION | (1 << 28)),
+        "version": version,
         "previousblockhash": prev_hex,
         "transactions": tx_json,
         "coinbaseaux": { "flags": "" },
@@ -680,11 +723,11 @@ pub fn gbt_template(ctx: &RpcContext) -> Result<Value, Value> {
         "noncerange": "00000000ffffffff",
         "sigoplimit": 80_000,
         "sizelimit": 4_000_000,
-        "weightlimit": 4_000_000,
+        "weightlimit": weightlimit,
         "curtime": curtime,
         "bits": format!("{bits:08x}"),
         "height": next_h,
-        "rules": ["segwit"],
+        "rules": rules,
         "default_witness_commitment": hex_encode(witness_commit),
     }))
 }
@@ -742,6 +785,11 @@ pub(crate) fn gbt_check_proposal(ctx: &RpcContext, block: &Block) -> Result<(), 
     if block.header.bits.to_consensus() != expected {
         return Err("bad-diffbits".into());
     }
+    if let Err(rbitcoin_consensus::ConsensusError::BadHeader(m)) =
+        rbitcoin_consensus::check_header_v2_rules(&params, Height(height), &block.header)
+    {
+        return Err(m.to_string());
+    }
     let mtp = rbitcoin_consensus::median_time_past(ctx.query.as_ref(), tip_h)
         .unwrap_or(tip_rec.timestamp);
     // Core is `<=` MTP. Proposal uses `<` so a template stamped at the
@@ -779,6 +827,14 @@ pub(crate) fn gbt_check_proposal(ctx: &RpcContext, block: &Block) -> Result<(), 
     }
     let vctx = rbitcoin_consensus::ValidationContext::at(&params, Height(height), milestone);
     if let Err(e) = rbitcoin_consensus::validate_block_structure(block, &vctx) {
+        return Err(rbitcoin_consensus::block_reject_reason(&e));
+    }
+    if let Err(e) =
+        rbitcoin_consensus::check_rdts_weight(&params, height, mtp, block.weight().to_wu())
+    {
+        return Err(rbitcoin_consensus::block_reject_reason(&e));
+    }
+    if let Err(e) = rbitcoin_consensus::check_rdts_output_sizes(&params, height, mtp, block) {
         return Err(rbitcoin_consensus::block_reject_reason(&e));
     }
     Ok(())

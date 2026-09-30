@@ -138,7 +138,7 @@ pub(crate) fn check_timewarp(
 /// Knots `CheckBlockHeader` / `ContextualCheckBlockHeaderVolatile` for the v2
 /// header: v2 exactly from the fork height, no reserved flag bits, and the
 /// header's own height field is the chain height.
-pub(crate) fn check_header_v2_rules(
+pub fn check_header_v2_rules(
     params: &ChainParams,
     height: Height,
     header: &Header,

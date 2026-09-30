@@ -25,6 +25,12 @@ Added
   `nonce2`, `nonce3`, `extranonce`, `time_offset`, `header_flags`,
   `xor_key_mask_clear_bits`, `xor_key` and `mm_rhs`; Esplora's block JSON
   carries mempool.guide's `header_v2` object.
+- **Mining v2 blocks.** Past the fork `getblocktemplate` requires the
+  `blake2b` client rule (Knots' error otherwise), answers with `!blake2b` in
+  `rules`, bit 31 in `version` and the RDTS `weightlimit` (800,000 WU, and
+  selects transactions within it) while the window is open; proposals apply
+  the v2 header rules and the RDTS block rules; `submitblock` takes a v2
+  block. The regtest journey mines one through the template.
 - **Bitcoin Knots v2 block header.** `bitcoin` comes from
   bitcoin-blake/rust-bitcoin (`v2-header`): a header with version bit 31
   carries the 84-byte Knots extension and hashes with the BLAKE2b

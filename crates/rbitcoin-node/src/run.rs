@@ -1668,7 +1668,7 @@ async fn start_esplora_if_ready(
                 alert_notify: None,
                 alert_fired: Arc::new(AtomicBool::new(false)),
             };
-            gbt_template(&ctx).map_err(|v| {
+            gbt_template(&ctx, &["segwit".to_string(), "blake2b".to_string()]).map_err(|v| {
                 v.get("message")
                     .and_then(|m| m.as_str())
                     .unwrap_or("block-template")

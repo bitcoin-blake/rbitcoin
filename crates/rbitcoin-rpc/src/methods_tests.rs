@@ -1203,11 +1203,19 @@ fn ctx_regtest_hub() -> (RpcContext, TempDir, Arc<rbitcoin_net::ChainHub>) {
 }
 
 fn ctx_regtest_hub_with_weight(max_wu: u64) -> (RpcContext, TempDir, Arc<rbitcoin_net::ChainHub>) {
-    use rbitcoin_consensus::{ChainParams, Milestone};
+    ctx_hub_with_params(rbitcoin_consensus::ChainParams::regtest(), max_wu)
+}
+
+/// A hub on `params` (regtest, or regtest with a fork scheduled) and its RPC context.
+fn ctx_hub_with_params(
+    params: rbitcoin_consensus::ChainParams,
+    max_wu: u64,
+) -> (RpcContext, TempDir, Arc<rbitcoin_net::ChainHub>) {
+    use rbitcoin_consensus::Milestone;
     let dir = TempDir::labeled("rpc-gen").expect("temp dir");
     let hub = Arc::new(rbitcoin_net::ChainHub::new(
         Query::open_or_create_tiny(dir.join("store")).unwrap(),
-        ChainParams::regtest(),
+        params,
         Milestone::NONE,
     ));
     hub.ensure_genesis().unwrap();

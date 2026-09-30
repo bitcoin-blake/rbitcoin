@@ -60,9 +60,9 @@ pub fn verify_tx_scripts_detached_forks(
 
 pub use block::{
     bip34_height_script, bip68_active_for_tx, block_has_witness, block_subsidy, check_block_wire,
-    is_final_tx, sequence_locks_satisfied, tx_sigop_cost, validate_block_structure,
-    witness_commitment_script, ValidationContext, MAX_BLOCK_TX_COUNT, MAX_BLOCK_WEIGHT,
-    MIN_TX_WEIGHT,
+    check_rdts_output_sizes, check_rdts_weight, is_final_tx, sequence_locks_satisfied,
+    tx_sigop_cost, validate_block_structure, witness_commitment_script, ValidationContext,
+    MAX_BLOCK_TX_COUNT, MAX_BLOCK_WEIGHT, MIN_TX_WEIGHT,
 };
 pub(crate) use block::{validate_block_structure_hashed, TxPrecompute};
 pub use clock::{with_now, NodeClock};
@@ -70,8 +70,8 @@ pub use convert::header_to_record;
 pub(crate) use convert::{block_to_apply, block_to_apply_with_txids_prev};
 pub use error::{block_reject_log_line, block_reject_reason, script_flag_paren, ConsensusError};
 pub use header::{
-    blake2b_shift_at, expected_next_bits, median_time_past, next_work_bits, retarget_bits,
-    validate_header, validate_header_on_parent, PeriodFirst,
+    blake2b_shift_at, check_header_v2_rules, expected_next_bits, median_time_past, next_work_bits,
+    retarget_bits, validate_header, validate_header_on_parent, PeriodFirst,
 };
 pub use index_writebehind::{
     build_indexes_released, index_tip_entry, prepare_live_indexes, spawn_index_writebehind,

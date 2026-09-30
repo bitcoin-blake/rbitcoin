@@ -1322,3 +1322,128 @@ fn walk_for(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     }
     None
 }
+
+/// Regtest with the BLAKE2b fork scheduled at height 2: block 1 is classic,
+/// then `getblocktemplate` demands the `blake2b` rule, hands out a v2
+/// template (bit 31 in `version`, `!blake2b` in `rules`, the RDTS weight
+/// limit), proposals apply the v2 and RDTS rules, and a v2 block mined from
+/// the template is accepted by `submitblock` and reported with Knots' keys.
+#[test]
+fn rpc_regtest_mines_a_v2_block_past_the_fork() {
+    use bitcoin::absolute::LockTime;
+    use bitcoin::block::{Header, HeaderV2, Version as BlockVersion};
+    use bitcoin::transaction::Version as TxVersion;
+    use bitcoin::{Amount, OutPoint, Sequence, TxIn, TxMerkleNode, TxOut, Witness};
+    use rbitcoin_consensus::{Blake2bParams, ChainParams};
+
+    let mut params = ChainParams::regtest();
+    params.blake2b = Some(Blake2bParams {
+        fork_height: 2,
+        target_shift: 0,
+        rdts_expiry: u32::MAX,
+        headline: None,
+    });
+    let (ctx, dir, _hub) = ctx_hub_with_params(params, 300_000_000);
+    let (addr, _) = p2wpkh_regtest();
+    dispatch(&ctx, "generatetoaddress", vec![json!(1), json!(addr)]).unwrap();
+    assert_eq!(tip_count(&ctx), 1);
+
+    // Height 2 is a v2 block: the client must name the rule.
+    let e = dispatch(&ctx, "getblocktemplate", vec![json!({"rules": ["segwit"]})]).unwrap_err();
+    assert!(
+        e["message"].as_str().unwrap().contains("blake2b"),
+        "template without the blake2b rule: {e}"
+    );
+    let tmpl = dispatch(
+        &ctx,
+        "getblocktemplate",
+        vec![json!({"rules": ["segwit", "blake2b"]})],
+    )
+    .unwrap();
+    assert_eq!(tmpl["height"], 2);
+    let version = tmpl["version"].as_u64().unwrap() as u32;
+    assert_ne!(version & Header::V2_VERSION_FLAG, 0, "version carries bit 31");
+    let rules: Vec<&str> = tmpl["rules"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    assert!(rules.contains(&"segwit") && rules.contains(&"!blake2b"), "{rules:?}");
+    assert_eq!(tmpl["weightlimit"], rbitcoin_consensus::RDTS_MAX_BLOCK_WEIGHT);
+
+    // Mine it: a coinbase to OP_TRUE, the v2 extension with the height and count.
+    let coinbase = Transaction {
+        version: TxVersion::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::from_bytes(vec![0x02, 0x00]),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: Amount::from_sat(tmpl["coinbasevalue"].as_u64().unwrap()),
+            script_pubkey: ScriptBuf::from_bytes(vec![0x51]),
+        }],
+    };
+    let prev = rbitcoin_primitives::parse_display_hash32(tmpl["previousblockhash"].as_str().unwrap()).unwrap();
+    let bits = u32::from_str_radix(tmpl["bits"].as_str().unwrap(), 16).unwrap();
+    let mut block = Block {
+        header: Header {
+            version: BlockVersion::from_consensus((version & !Header::V2_VERSION_FLAG) as i32),
+            prev_blockhash: BlockHash::from_byte_array(prev),
+            merkle_root: TxMerkleNode::from_byte_array([0u8; 32]),
+            time: tmpl["curtime"].as_u64().unwrap() as u32,
+            bits: bitcoin::CompactTarget::from_consensus(bits),
+            nonce: 0,
+            v2: Some(HeaderV2 {
+                nonce2: 7,
+                nonce3: 0,
+                extranonce: [0x11; 16],
+                time_offset: 0,
+                tx_count: 1,
+                flags: 0,
+                xor_key_mask_clear_bits: 0,
+                xor_key: [0; 16],
+                height: 2,
+                mm_rhs: [0; 32],
+            }),
+        },
+        txdata: vec![coinbase],
+    };
+    block.header.merkle_root = block.compute_merkle_root().unwrap();
+    let propose_v2 = |b: &Block| {
+        let req = json!({"mode": "proposal", "data": block_hex(b), "rules": ["segwit", "blake2b"]});
+        dispatch(&ctx, "getblocktemplate", vec![req]).unwrap()
+    };
+    assert!(propose_v2(&block).is_null(), "valid v2 proposal");
+    let mut classic = block.clone();
+    classic.header.v2 = None;
+    assert_eq!(propose_v2(&classic), "bad-version-blake2b");
+    let mut miscounted = block.clone();
+    miscounted.header.v2.as_mut().unwrap().tx_count = 2;
+    assert_eq!(propose_v2(&miscounted), "bad-txnlist-size");
+    let mut wrong_height = block.clone();
+    wrong_height.header.v2.as_mut().unwrap().height = 3;
+    assert_eq!(propose_v2(&wrong_height), "bad-header-height");
+    let mut fat_output = block.clone();
+    fat_output.txdata[0].output[0].script_pubkey = ScriptBuf::from_bytes(vec![0x51; 35]);
+    fat_output.header.merkle_root = fat_output.compute_merkle_root().unwrap();
+    assert_eq!(propose_v2(&fat_output), "bad-txns-vout-script-toolarge");
+
+    regrind(&mut block);
+    let submitted = dispatch(&ctx, "submitblock", vec![json!(block_hex(&block))]).unwrap();
+    assert!(submitted.is_null(), "submitblock accepts the v2 block: {submitted}");
+    assert_eq!(tip_count(&ctx), 2);
+    let best = best_hash(&ctx);
+    assert_eq!(best.as_str().unwrap(), block.block_hash().to_string());
+    let hdr = dispatch(&ctx, "getblockheader", vec![best.clone()]).unwrap();
+    assert_eq!(hdr["header_version"], 2);
+    assert_eq!(hdr["nonce2"], "07000000");
+    assert_eq!(hdr["extranonce"], "11".repeat(16));
+    assert_eq!(hdr["txcount"], 1);
+    let raw = dispatch(&ctx, "getblockheader", vec![best, json!(false)]).unwrap();
+    assert_eq!(raw.as_str().unwrap().len(), 164 * 2);
+
+    // The next template builds on the v2 tip and is v2 again.
+    let next = dispatch(&ctx, "getblocktemplate", vec![json!({"rules": ["segwit", "blake2b"]})]).unwrap();
+    assert_eq!(next["height"], 3);
+    assert_eq!(next["previousblockhash"], block.block_hash().to_string());
+    let _ = std::fs::remove_dir_all(&dir);
+}
