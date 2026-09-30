@@ -203,7 +203,7 @@ pub fn expected_next_bits(
         .header_at_height(prev_height)?
         .ok_or(ConsensusError::BadPrev)?;
     let prev_bits = CompactTarget::from_consensus(prev_rec.bits);
-    let period_first = period_first_time(query, params, height.0)?;
+    let period_first = period_first(query, params, height.0)?;
     next_work_bits(
         params,
         height.0,
@@ -220,18 +220,26 @@ pub fn expected_next_bits(
     .ok_or(ConsensusError::BadPrev)
 }
 
+/// The header at `height - interval` of a retarget boundary: its time spans
+/// the period, and under BIP94 its `nBits` is the retarget base.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeriodFirst {
+    pub time: u32,
+    pub bits: CompactTarget,
+}
+
 /// Difficulty for the header at `height`, from the parent and the period start.
 ///
-/// `period_first_time` is the timestamp of the header at `height - interval`
-/// when `height` is a retarget boundary. `bits_at` supplies earlier `nBits`
-/// for the testnet min-difficulty walk. `None` means an ancestor is missing.
+/// `period_first` is the header at `height - interval` when `height` is a
+/// retarget boundary. `bits_at` supplies earlier `nBits` for the testnet
+/// min-difficulty walk. `None` means an ancestor is missing.
 pub fn next_work_bits(
     params: &ChainParams,
     height: u32,
     prev_bits: CompactTarget,
     prev_time: u32,
     header_time: u32,
-    period_first_time: Option<u32>,
+    period_first: Option<PeriodFirst>,
     mut bits_at: impl FnMut(u32) -> Option<CompactTarget>,
 ) -> Option<CompactTarget> {
     if height == 0 {
@@ -251,20 +259,33 @@ pub fn next_work_bits(
     if params.no_pow_retargeting() {
         return Some(prev_bits);
     }
-    let first_time = period_first_time?;
-    let timespan = u64::from(prev_time.saturating_sub(first_time));
-    Some(CompactTarget::from_next_work_required(
-        prev_bits,
-        timespan,
-        &params.btc,
-    ))
+    Some(retarget_bits(params, prev_bits, prev_time, period_first?))
 }
 
-fn period_first_time(
+/// Retarget at a period boundary from the parent and the period's first header
+/// (Core `CalculateNextWorkRequired`).
+pub fn retarget_bits(
+    params: &ChainParams,
+    prev_bits: CompactTarget,
+    prev_time: u32,
+    first: PeriodFirst,
+) -> CompactTarget {
+    let timespan = u64::from(prev_time.saturating_sub(first.time));
+    // BIP94: the period's first block never took the min-difficulty exception,
+    // so its bits are the real difficulty; the parent's may be the pow limit.
+    let base = if params.enforce_bip94() {
+        first.bits
+    } else {
+        prev_bits
+    };
+    CompactTarget::from_next_work_required(base, timespan, &params.btc)
+}
+
+fn period_first(
     query: &Query,
     params: &ChainParams,
     height: u32,
-) -> Result<Option<u32>, ConsensusError> {
+) -> Result<Option<PeriodFirst>, ConsensusError> {
     let interval = params.difficulty_adjustment_interval();
     if interval == 0 || !height.is_multiple_of(interval) || params.no_pow_retargeting() {
         return Ok(None);
@@ -272,7 +293,10 @@ fn period_first_time(
     let (_fk, first_rec) = query
         .header_at_height(Height(height - interval))?
         .ok_or(ConsensusError::BadHeader("missing retarget first header"))?;
-    Ok(Some(first_rec.timestamp))
+    Ok(Some(PeriodFirst {
+        time: first_rec.timestamp,
+        bits: CompactTarget::from_consensus(first_rec.bits),
+    }))
 }
 
 fn min_diff_bits(
@@ -562,6 +586,47 @@ mod median_time_past_tests {
         assert_eq!(walked.to_consensus(), h0.bits);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bip94_retargets_from_period_first_bits() {
+        let t4 = ChainParams::testnet4();
+        let t3 = ChainParams::testnet();
+        let interval = t4.difficulty_adjustment_interval();
+        let limit = t4.pow_limit.to_compact_lossy();
+        let full = CompactTarget::from_consensus(0x1d00_eeee);
+        let spacing = t4.btc.pow_target_spacing as u32;
+        let first = PeriodFirst {
+            time: 1_000_000,
+            bits: full,
+        };
+        // The parent took the 20-minute exception; the period ran on schedule.
+        let prev_time = first.time + spacing * (interval - 1);
+        let args = |params: &ChainParams| {
+            next_work_bits(
+                params,
+                interval,
+                limit,
+                prev_time,
+                prev_time + spacing,
+                Some(first),
+                |_| None,
+            )
+            .unwrap()
+        };
+        let timespan = u64::from(prev_time - first.time);
+        assert_eq!(
+            args(&t4),
+            CompactTarget::from_next_work_required(full, timespan, &t4.btc)
+        );
+        assert_eq!(
+            args(&t3),
+            CompactTarget::from_next_work_required(limit, timespan, &t3.btc)
+        );
+        assert_ne!(args(&t4), args(&t3));
+        assert!(t4.enforce_bip94());
+        assert!(!t3.enforce_bip94());
+        assert!(!ChainParams::mainnet().enforce_bip94());
     }
 
     #[test]

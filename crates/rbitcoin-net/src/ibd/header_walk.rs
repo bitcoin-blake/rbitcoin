@@ -26,6 +26,7 @@ use bitcoin::hashes::Hash;
 use bitcoin::BlockHash;
 use bitcoin::CompactTarget;
 use bitcoin::Work;
+use rbitcoin_consensus::PeriodFirst;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -2174,17 +2175,17 @@ fn expected_lookahead_bits(
         parent.bits,
         parent.time,
         header_time,
-        period_first_time(hub, height, st, diff),
+        period_first(hub, height, st, diff),
         |h| lookahead_bits_at(diff, st, hub, h),
     )
 }
 
-fn period_first_time(
+fn period_first(
     hub: &ChainHub,
     height: u32,
     st: &IbdWorkState,
     diff: &DiffSnap,
-) -> Option<u32> {
+) -> Option<PeriodFirst> {
     let params = &hub.params;
     let interval = params.difficulty_adjustment_interval();
     if interval == 0 || !height.is_multiple_of(interval) || params.no_pow_retargeting() {
@@ -2198,7 +2199,10 @@ fn period_first_time(
     };
     first
         .or_else(|| header_on_store(st, hub, start_h))
-        .map(|h| h.time)
+        .map(|h| PeriodFirst {
+            time: h.time,
+            bits: h.bits,
+        })
 }
 
 fn lookahead_bits_at(
@@ -4832,11 +4836,15 @@ mod tests {
         let interval = hub.params.difficulty_adjustment_interval();
         let period_first = if interval > 0 && height.is_multiple_of(interval) {
             let start = height - interval;
-            if start == 0 {
-                Some(genesis.time)
+            let first = if start == 0 {
+                Some(genesis)
             } else {
-                prior.get((start as usize) - 1).map(|h| h.time)
-            }
+                prior.get((start as usize) - 1)
+            };
+            first.map(|h| PeriodFirst {
+                time: h.time,
+                bits: h.bits,
+            })
         } else {
             None
         };

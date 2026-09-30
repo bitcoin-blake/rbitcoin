@@ -174,6 +174,13 @@ impl ChainParams {
         self.btc.no_pow_retargeting
     }
 
+    /// BIP94: retarget from the period's first block and floor the first
+    /// block of a period at parent time minus [`crate::header::MAX_TIMEWARP`].
+    /// Core enforces it on testnet4 only.
+    pub fn enforce_bip94(&self) -> bool {
+        self.network == Network::Testnet4
+    }
+
     pub fn allow_min_difficulty_blocks(&self) -> bool {
         self.btc.allow_min_difficulty_blocks
     }

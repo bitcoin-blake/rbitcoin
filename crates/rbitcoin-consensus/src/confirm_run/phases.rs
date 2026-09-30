@@ -415,17 +415,20 @@ pub(super) fn expected_bits_extending(
         // Period-start may still be above confirmed tip during tip-ahead
         // multi-block load (i>0). Lookup/load already put_header_plan.
         let first_height = Height(height.0 - interval);
-        let first_ts = if let Some((_fk, rec)) = query
+        let first_rec = if let Some((_fk, rec)) = query
             .header_at_height(first_height)
             .map_err(ConsensusError::from)?
         {
-            rec.timestamp
+            rec
         } else if let Some(plan) = query.confirm_parent_cache().get_header_plan(first_height.0) {
-            plan.header_rec.timestamp
+            plan.header_rec
         } else {
             return Err(ConsensusError::BadHeader("missing retarget first header"));
         };
-        Some(first_ts)
+        Some(crate::header::PeriodFirst {
+            time: first_rec.timestamp,
+            bits: CompactTarget::from_consensus(first_rec.bits),
+        })
     } else {
         None
     };

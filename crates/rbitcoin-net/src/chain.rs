@@ -11,8 +11,8 @@ use bitcoin::{Block, BlockHash, CompactTarget, ScriptBuf, Target, Transaction, T
 use rbitcoin_consensus::{
     accept_and_connect_block_preverified, confirm_wire_load_from_plan as consensus_load_from_plan,
     confirm_wire_load_phase_pipelined, confirm_write_phase, genesis_block, header_to_record,
-    mine_regtest_paying, validate_header, validate_header_on_parent, ChainParams, Milestone,
-    PlanStampOutcome, ScriptOkBatch, ScriptPreverified, WireLoadPipeline,
+    mine_regtest_paying, retarget_bits, validate_header, validate_header_on_parent, ChainParams,
+    Milestone, PeriodFirst, PlanStampOutcome, ScriptOkBatch, ScriptPreverified, WireLoadPipeline,
 };
 use rbitcoin_log::info;
 use rbitcoin_primitives::{Fk, Height};
@@ -1463,11 +1463,14 @@ impl ChainHub {
         let first = self
             .header_along_off_tip(parent, parent_height, first_h, in_batch)
             .ok_or_else(|| NetError::Consensus("missing retarget first header".into()))?;
-        let timespan = u64::from(parent.time.saturating_sub(first.time));
-        Ok(CompactTarget::from_next_work_required(
+        Ok(retarget_bits(
+            &self.params,
             parent.bits,
-            timespan,
-            &self.params.btc,
+            parent.time,
+            PeriodFirst {
+                time: first.time,
+                bits: first.bits,
+            },
         ))
     }
 
