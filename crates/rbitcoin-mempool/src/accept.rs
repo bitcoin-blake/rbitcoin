@@ -401,11 +401,37 @@ fn first_missing_outpoint(
         .find(|op| missing.contains(&op.txid) && extra(op))
 }
 
-fn verify_tx_scripts(tx: &Transaction, prevouts: Vec<TxOut>) -> Result<(), AcceptError> {
+/// Script policy that follows the chain the mempool serves. Knots sets the
+/// unified-sighash flag wherever the BLAKE2b fork is scheduled (a lagging node
+/// would otherwise refuse what its peers relay) and carries the RDTS flags as
+/// standardness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ForkScriptPolicy {
+    /// Opted-in signatures are checked against the unified message.
+    pub unified_sighash: bool,
+    /// RDTS rules as standardness, on every input.
+    pub reduced_data: bool,
+}
+
+impl ForkScriptPolicy {
+    /// The script flags admission verifies with: every buried fork, plus this policy.
+    pub fn script_flags(self) -> rbitcoin_consensus::ScriptVerifyFlags {
+        let mut flags = rbitcoin_consensus::ScriptVerifyFlags::buried(true, true, true, true, true);
+        flags.unified_sighash = self.unified_sighash;
+        flags.reduced_data = self.reduced_data;
+        flags
+    }
+}
+
+fn verify_tx_scripts(
+    tx: &Transaction,
+    prevouts: Vec<TxOut>,
+    policy: ForkScriptPolicy,
+) -> Result<(), AcceptError> {
     if prevouts.len() != tx.input.len() {
         return Err(AcceptError::Script("prevout count mismatch".into()));
     }
-    rbitcoin_consensus::verify_tx_scripts_detached(prevouts, tx.clone())
+    rbitcoin_consensus::verify_tx_scripts_detached_with(prevouts, tx.clone(), policy.script_flags())
         .map_err(|e| AcceptError::Script(e.to_string()))
 }
 
@@ -472,6 +498,8 @@ pub struct ActiveMempool {
     rolling_updated_ms: u64,
     /// Txids recently rejected as invalid (not policy-reconsiderable).
     recent_invalid: HashSet<Txid>,
+    /// Script policy of the chain served (fork opt-ins).
+    fork_policy: ForkScriptPolicy,
     /// Recent rejects / RBF replacements for compact fill and 1p1c.
     extra_compact: VecDeque<(Txid, Transaction)>,
 }
@@ -545,8 +573,18 @@ impl ActiveMempool {
             rolling_min_sat_kvb: rbitcoin_consensus::policy::MIN_RELAY_FEE_RATE_SAT_PER_KVB,
             rolling_updated_ms: unix_ms(),
             recent_invalid: HashSet::new(),
+            fork_policy: ForkScriptPolicy::default(),
             extra_compact: VecDeque::new(),
         })
+    }
+
+    /// Script policy for the chain this mempool serves.
+    pub fn set_fork_policy(&mut self, policy: ForkScriptPolicy) {
+        self.fork_policy = policy;
+    }
+
+    pub fn fork_policy(&self) -> ForkScriptPolicy {
+        self.fork_policy
     }
 
     pub fn live_count(&self) -> usize {
@@ -708,7 +746,7 @@ impl ActiveMempool {
         let prep = self.prepare_admit(tx, utxos, tip, fee_delta, report_orphans, min_relay)?;
         self.last_accept_stages.utxo_us = prep.utxo_us;
         let t_script = Instant::now();
-        let script_res = verify_tx_scripts(tx, prep.prevouts.clone());
+        let script_res = verify_tx_scripts(tx, prep.prevouts.clone(), self.fork_policy);
         self.last_accept_stages.script_us = self
             .last_accept_stages
             .script_us
@@ -2401,6 +2439,44 @@ mod tests {
         let (op2, _, utxos2) = chain_utxo(50_000);
         let ok = spend_tx(op2, 49_000);
         mp.accept_tx(&ok, &utxos2, TIP_OK).expect("ACS still ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `btc:testnet4-blake2b` 150,336: a taproot spend signed
+    /// `SIGHASH_ALL | SIGHASH_UNIFIED`. Legacy policy refuses it; the fork's
+    /// policy takes it, so it can relay and reach a template.
+    #[test]
+    fn opted_in_signature_relays_only_under_the_fork_policy() {
+        let dir = tmp_dir();
+        let raw = rbitcoin_primitives::hex_decode("0200000000010139382bdedc269f5619b355c3a1a35fd0eaf5e2cdbb519d2a464315847c30743e0100000000feffffff02fbed00000000000022512042cbbc48095e40a27a7435c5f00de131097d8136ad297e7a09daa51da0805cef60770200000000002251209ef54bd84baced5d1fc48174699893f7576bcdd68872ae75abe906111e3ae1d50141c33ca18f7e478ca7270cd32c2456174bbde31d30f1b13e5376d7f27b1907a0188e4e990ab190dec6f763651ee1f297b2708860ba409b778d477f0addbb7eea74213f4b0200").unwrap();
+        let tx: Transaction = bitcoin::consensus::deserialize(&raw).unwrap();
+        let op = tx.input[0].previous_output;
+        let txout = TxOut {
+            value: Amount::from_sat(227_565),
+            script_pubkey: ScriptBuf::from_bytes(
+                rbitcoin_primitives::hex_decode(
+                    "5120c54bc3c5a67e1cf0096dc52fbe54bbc24b1858bb83da43e0c539953d6d355675",
+                )
+                .unwrap(),
+            ),
+        };
+        let mut map = HashMap::new();
+        map.insert(op, coin(txout));
+        let utxos = MapUtxoProvider { map };
+        let mut mp = ActiveMempool::open_or_create(&dir).unwrap();
+        let err = mp.accept_tx(&tx, &utxos, TIP_OK).unwrap_err();
+        assert!(
+            matches!(&err, AcceptError::Script(m) if m.contains("sighash type")),
+            "legacy policy reads 0x21 as an unknown taproot hash type: {err}"
+        );
+        assert_eq!(mp.live_count(), 0);
+        mp.set_fork_policy(ForkScriptPolicy {
+            unified_sighash: true,
+            reduced_data: true,
+        });
+        mp.accept_tx(&tx, &utxos, TIP_OK)
+            .expect("accepted under the fork's policy");
+        assert_eq!(mp.live_count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

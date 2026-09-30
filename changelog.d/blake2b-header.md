@@ -17,7 +17,10 @@ Added
   `OP_SUCCESS`, no annex, control blocks of at most 7 nodes, no unknown
   leaf or witness versions, and output scripts of at most 34 bytes (83 for
   `OP_RETURN`); inputs that spend pre-fork outputs are exempt, as in Knots.
-  Relay policy does not yet opt in.
+- **Relay policy follows the chain.** Where the fork is scheduled the mempool
+  checks opted-in signatures against the unified message and carries the
+  RDTS rules as standardness, as Knots does, so post-fork transactions relay
+  and reach templates.
 - **v2 headers on every surface.** Electrum (`blockchain.headers.subscribe`,
   `block.header`, `block.headers`), Esplora (`/block/:hash/header`), REST and
   `getblockheader false` serve the 164-byte header for a v2 block.

@@ -1650,15 +1650,18 @@ impl MempoolHub {
     ) -> Result<rbitcoin_mempool::PreparedAdmit, AcceptError> {
         let tip = self.chain_tip_ctx();
         let t_prep = Instant::now();
-        let prep = {
+        let (prep, policy) = {
             let g = self.lock_read();
-            g.prepare_admit(
-                tx,
-                utxo,
-                tip,
-                spec.fee_delta,
-                spec.report_orphans,
-                spec.min_relay,
+            (
+                g.prepare_admit(
+                    tx,
+                    utxo,
+                    tip,
+                    spec.fee_delta,
+                    spec.report_orphans,
+                    spec.min_relay,
+                ),
+                g.fork_policy(),
             )
         };
         if spec.time_prepare_lock {
@@ -1672,9 +1675,11 @@ impl MempoolHub {
             Err(e) => return Err(e),
         };
         let t_script = Instant::now();
-        if let Err(e) =
-            rbitcoin_consensus::verify_tx_scripts_detached(prep.prevouts.clone(), tx.clone())
-        {
+        if let Err(e) = rbitcoin_consensus::verify_tx_scripts_detached_with(
+            prep.prevouts.clone(),
+            tx.clone(),
+            policy.script_flags(),
+        ) {
             stages.script_us = stages
                 .script_us
                 .saturating_add(t_script.elapsed().as_micros() as u64);
@@ -3088,6 +3093,11 @@ impl MempoolHub {
     pub fn set_min_relay_sat_kvb(&self, sat_kvb: u64) {
         self.min_relay_sat_kvb.store(sat_kvb, Ordering::Release);
         self.lock_write().set_min_relay_sat_kvb(sat_kvb);
+    }
+
+    /// Script policy of the chain served: opt in wherever the BLAKE2b fork is scheduled.
+    pub fn set_fork_policy(&self, policy: rbitcoin_mempool::ForkScriptPolicy) {
+        self.lock_write().set_fork_policy(policy);
     }
 
     pub fn min_relay_sat_kvb(&self) -> u64 {
@@ -4693,6 +4703,58 @@ mod tests {
         assert_eq!(mp.purge_confirmed_on_chain(), 0);
         // Still no-op for unknown txid, but path is live.
         assert_eq!(mp.remove_for_block(&[dummy]), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&store_dir);
+    }
+
+    /// `btc:testnet4-blake2b` 150,376, a P2PKH spend signed `ALL|UNIFIED`:
+    /// the hub's own admission path (scripts outside the lock) refuses it under
+    /// the legacy policy and takes it under the fork's.
+    #[test]
+    fn hub_admission_uses_the_fork_script_policy() {
+        let dir = tmp();
+        let store_dir = tmp();
+        let q = Query::open_or_create_tiny(&store_dir).unwrap();
+        let hub = MempoolHub::open(&dir, Arc::new(q)).unwrap();
+        hub.set_relay_enabled(true);
+        let raw = rbitcoin_primitives::hex_decode("02000000011d22f4c9fbefc73c8ada5d0adb3b4b8cce2f42743a3898c7835ddbd473904ea4000000006a47304402203a4b56fd48297f998cdceb89b749fa4ea1d297bdac69c6ab9fa1f3aec24fe8d2022071d540a5a96deac0c17460be498d01da9f7c3b069979e0f634da30bb0c3cd2b2212103f12c2e417a1d01f80053a4c9f507646f014b05e2b29df353d5648ddcda4e90aeffffffff018db71300000000001976a914307719088bf8c0d04ecad7a8d0b3b33f4166151588ac00000000").unwrap();
+        let tx: Transaction = bitcoin::consensus::deserialize(&raw).unwrap();
+        struct OneCoin(OutPoint, Coin);
+        impl UtxoProvider for OneCoin {
+            fn get_coin(&self, op: &OutPoint) -> Option<Coin> {
+                (*op == self.0).then(|| self.1.clone())
+            }
+        }
+        let utxos = OneCoin(
+            tx.input[0].previous_output,
+            Coin {
+                txout: TxOut {
+                    value: Amount::from_sat(1_292_364),
+                    script_pubkey: ScriptBuf::from_bytes(
+                        rbitcoin_primitives::hex_decode(
+                            "76a914cf7ef7831da1f883f3baab4126926c96c915b1f288ac",
+                        )
+                        .unwrap(),
+                    ),
+                },
+                create_height: 0,
+                create_mtp: 0,
+                is_coinbase: false,
+                create_fk: None,
+            },
+        );
+        let err = hub.accept_with_utxo(&tx, &utxos, None).unwrap_err();
+        assert!(
+            matches!(&err, AcceptError::Script(m) if m.contains("ecdsa")),
+            "legacy policy: {err}"
+        );
+        hub.set_fork_policy(rbitcoin_mempool::ForkScriptPolicy {
+            unified_sighash: true,
+            reduced_data: true,
+        });
+        hub.accept_with_utxo(&tx, &utxos, None)
+            .expect("the fork's policy admits the opted-in spend");
+        assert_eq!(hub.live_count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&store_dir);
     }

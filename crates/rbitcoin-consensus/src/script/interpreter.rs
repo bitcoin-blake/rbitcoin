@@ -1393,7 +1393,7 @@ fn checksig_legacy_encodings(
             }
         }
     }
-    if ctx.strictenc && !crypto::is_defined_hashtype(sig) {
+    if ctx.strictenc && !crypto::is_defined_hashtype(sig, ctx.unified_sighash) {
         return Err(ConsensusError::Script("SIG_HASHTYPE".into()));
     }
     if ctx.strictenc && !crypto::is_compressed_or_uncompressed_pubkey(pubkey) {

@@ -18,6 +18,7 @@ mod signet;
 pub mod silent_payments;
 
 pub(crate) use block::ScriptCheckJob;
+pub use block::ScriptVerifyFlags;
 
 /// Consensus script verify for a single tx on the shared `rbtc-scripts` path.
 ///
@@ -41,18 +42,27 @@ pub fn verify_tx_scripts_detached_forks(
     bip16_active: bool,
     taproot_active: bool,
 ) -> Result<(), ConsensusError> {
+    verify_tx_scripts_detached_with(
+        prevouts,
+        tx,
+        crate::block::ScriptVerifyFlags::buried(
+            bip65_active,
+            bip112_active,
+            bip66_active,
+            bip16_active,
+            taproot_active,
+        ),
+    )
+}
+
+/// Same worker path with caller-built flags (relay policy on a fork chain).
+pub fn verify_tx_scripts_detached_with(
+    prevouts: Vec<bitcoin::TxOut>,
+    tx: bitcoin::Transaction,
+    flags: crate::block::ScriptVerifyFlags,
+) -> Result<(), ConsensusError> {
     script_pool::run_detached_join(move || {
-        let job = ScriptCheckJob::new(
-            prevouts,
-            tx,
-            crate::block::ScriptVerifyFlags::buried(
-                bip65_active,
-                bip112_active,
-                bip66_active,
-                bip16_active,
-                taproot_active,
-            ),
-        );
+        let job = ScriptCheckJob::new(prevouts, tx, flags);
         crate::script::verify_job_all_inputs(&job)
     })
     .unwrap_or(Err(ConsensusError::BadBlock("script worker disconnected")))

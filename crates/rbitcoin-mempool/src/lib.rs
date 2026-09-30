@@ -44,7 +44,7 @@ mod store;
 
 pub use accept::{
     check_mempool_structural, AcceptError, AcceptFailureRecord, AcceptResult, AcceptStageUs,
-    ActiveMempool, ChainPrevout, ChainTipCtx, Coin, PreparedAdmit, UtxoProvider,
+    ActiveMempool, ChainPrevout, ChainTipCtx, Coin, ForkScriptPolicy, PreparedAdmit, UtxoProvider,
     DEFAULT_MAX_MEMPOOL_WEIGHT, MAX_PACKAGE_COUNT, MAX_PACKAGE_WEIGHT,
 };
 pub use error::MempoolError;

@@ -389,12 +389,16 @@ pub(crate) mod crypto {
     }
 
     /// Base hashtype in {ALL,NONE,SINGLE}, optional ACP.
-    pub fn is_defined_hashtype(sig_raw: &[u8]) -> bool {
+    pub fn is_defined_hashtype(sig_raw: &[u8], unified_sighash: bool) -> bool {
         if sig_raw.is_empty() {
             return false;
         }
         let ht = sig_raw[sig_raw.len() - 1];
-        let base = ht & !0x80; // strip SIGHASH_ANYONECANPAY
+        let mut base = ht & !0x80; // strip SIGHASH_ANYONECANPAY
+                                   // Knots: the opt-in bit is a defined hash type wherever the fork applies.
+        if unified_sighash {
+            base &= !super::unified_sighash::SIGHASH_UNIFIED;
+        }
         (1..=3).contains(&base) // ALL=1 NONE=2 SINGLE=3
     }
 
@@ -595,13 +599,18 @@ pub(crate) mod crypto {
             assert!(!is_compressed_or_uncompressed_pubkey(&[]));
             assert!(!is_compressed_or_uncompressed_pubkey(&[0x02; 32]));
 
-            assert!(is_defined_hashtype(&[0x30, 0x01])); // ALL
-            assert!(is_defined_hashtype(&[0x30, 0x02])); // NONE
-            assert!(is_defined_hashtype(&[0x30, 0x03])); // SINGLE
-            assert!(is_defined_hashtype(&[0x30, 0x81])); // ALL|ACP
-            assert!(!is_defined_hashtype(&[0x30, 0x00]));
-            assert!(!is_defined_hashtype(&[0x30, 0x04]));
-            assert!(!is_defined_hashtype(&[]));
+            assert!(is_defined_hashtype(&[0x30, 0x01], false)); // ALL
+            assert!(is_defined_hashtype(&[0x30, 0x02], false)); // NONE
+            assert!(is_defined_hashtype(&[0x30, 0x03], false)); // SINGLE
+            assert!(is_defined_hashtype(&[0x30, 0x81], false)); // ALL|ACP
+            assert!(!is_defined_hashtype(&[0x30, 0x00], false));
+            assert!(!is_defined_hashtype(&[0x30, 0x04], false));
+            assert!(!is_defined_hashtype(&[], false));
+            // The opt-in bit is defined only where the fork applies.
+            assert!(!is_defined_hashtype(&[0x30, 0x21], false));
+            assert!(is_defined_hashtype(&[0x30, 0x21], true));
+            assert!(is_defined_hashtype(&[0x30, 0xa3], true)); // SINGLE|ACP|UNIFIED
+            assert!(!is_defined_hashtype(&[0x30, 0x20], true));
         }
 
         #[test]
