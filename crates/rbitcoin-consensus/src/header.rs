@@ -49,6 +49,7 @@ pub(crate) fn validate_header_hashed(
         if header.time <= mtp {
             return Err(ConsensusError::BadHeader("timestamp <= median-time-past"));
         }
+        check_timewarp(params, height, prev_rec.timestamp, header.time)?;
         check_header_version_and_future_time(params, height, header)?;
     }
 
@@ -72,12 +73,14 @@ pub fn validate_header_on_parent(
     params: &ChainParams,
     height: Height,
     header: &Header,
+    parent_time: u32,
     parent_mtp: u32,
     expected_bits: CompactTarget,
 ) -> Result<(), ConsensusError> {
     if header.time <= parent_mtp {
         return Err(ConsensusError::BadHeader("timestamp <= median-time-past"));
     }
+    check_timewarp(params, height, parent_time, header.time)?;
     check_header_version_and_future_time(params, height, header)?;
     if header.bits != expected_bits {
         return Err(ConsensusError::BadHeader("incorrect proof of work bits"));
@@ -101,6 +104,33 @@ pub(crate) fn pow_hash_meets_target(
     }
     if !target.is_met_by(bitcoin::BlockHash::from_byte_array(hash)) {
         return Err(ConsensusError::InvalidPow);
+    }
+    Ok(())
+}
+
+/// BIP94 timewarp floor: how far below its parent the first block of a
+/// retarget period may be timestamped (Core `MAX_TIMEWARP`).
+pub const MAX_TIMEWARP: u32 = 600;
+
+/// BIP94: the first block of a retarget period is not earlier than its parent
+/// by more than [`MAX_TIMEWARP`] (Core `ContextualCheckBlockHeader`).
+pub(crate) fn check_timewarp(
+    params: &ChainParams,
+    height: Height,
+    prev_time: u32,
+    header_time: u32,
+) -> Result<(), ConsensusError> {
+    if !params.enforce_bip94() {
+        return Ok(());
+    }
+    let interval = params.difficulty_adjustment_interval();
+    if interval == 0 || !height.0.is_multiple_of(interval) {
+        return Ok(());
+    }
+    if header_time < prev_time.saturating_sub(MAX_TIMEWARP) {
+        return Err(ConsensusError::BadHeader(
+            "timestamp too early on retarget block (timewarp)",
+        ));
     }
     Ok(())
 }
@@ -586,6 +616,50 @@ mod median_time_past_tests {
         assert_eq!(walked.to_consensus(), h0.bits);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bip94_timewarp_floor_on_retarget_block() {
+        let t4 = ChainParams::testnet4();
+        let interval = t4.difficulty_adjustment_interval();
+        let bits = t4.pow_limit.to_compact_lossy();
+        let parent_time = 1_000_000u32;
+        let header_at = |time: u32| Header {
+            version: bitcoin::block::Version::from_consensus(4),
+            prev_blockhash: bitcoin::BlockHash::all_zeros(),
+            merkle_root: bitcoin::TxMerkleNode::all_zeros(),
+            time,
+            bits,
+            nonce: 0,
+        };
+        let check = |params: &ChainParams, height: u32, time: u32| {
+            validate_header_on_parent(
+                params,
+                Height(height),
+                &header_at(time),
+                parent_time,
+                1,
+                bits,
+            )
+        };
+        let too_early = parent_time - MAX_TIMEWARP - 1;
+        assert!(matches!(
+            check(&t4, interval, too_early),
+            Err(ConsensusError::BadHeader(m)) if m.contains("timewarp")
+        ));
+        // At the floor, and off the boundary, the header reaches the pow check.
+        assert!(matches!(
+            check(&t4, interval, parent_time - MAX_TIMEWARP),
+            Err(ConsensusError::InvalidPow)
+        ));
+        assert!(matches!(
+            check(&t4, interval + 1, too_early),
+            Err(ConsensusError::InvalidPow)
+        ));
+        assert!(matches!(
+            check(&ChainParams::testnet(), interval, too_early),
+            Err(ConsensusError::InvalidPow)
+        ));
     }
 
     #[test]

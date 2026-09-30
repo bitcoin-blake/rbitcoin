@@ -2145,6 +2145,7 @@ fn batch_context_ok(
             &hub.params,
             rbitcoin_primitives::Height(height),
             hdr,
+            parent.time,
             mtp,
             bits,
         )

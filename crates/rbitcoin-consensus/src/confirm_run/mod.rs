@@ -29,8 +29,8 @@ use crate::block::{
 };
 use crate::error::ConsensusError;
 use crate::header::{
-    check_header_version_and_future_time, median_time_past_times, pow_hash_meets_target,
-    validate_header_hashed,
+    check_header_version_and_future_time, check_timewarp, median_time_past_times,
+    pow_hash_meets_target, validate_header_hashed,
 };
 use crate::milestone::Milestone;
 use crate::params::{genesis_block, ChainParams};

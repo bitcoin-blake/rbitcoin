@@ -54,6 +54,7 @@ fn assemble_parent_mtp_and_bits(
             "confirm: load incomplete (parent header plan missing above tip)",
         )));
     };
+    check_timewarp(params, height, prev_time, header.time)?;
     if let Some(cp) = params.checkpoint_at(height) {
         if cp.to_byte_array() != block_hash {
             return Err(ConsensusError::BadHeader("checkpoint mismatch"));
@@ -84,6 +85,7 @@ fn assemble_chained_header(
     if header.time <= mtp {
         return Err(ConsensusError::BadHeader("timestamp <= median-time-past"));
     }
+    check_timewarp(params, height, prev.time, header.time)?;
     check_header_version_and_future_time(params, height, header)?;
     if let Some(cp) = params.checkpoint_at(height) {
         if cp.to_byte_array() != block_hash {

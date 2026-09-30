@@ -1366,6 +1366,7 @@ impl ChainHub {
             &self.params,
             Height(parent_height.saturating_add(1)),
             header,
+            parent.time,
             mtp,
             expected,
         )
