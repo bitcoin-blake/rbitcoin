@@ -34,6 +34,7 @@ pub(crate) fn rpc_btc_network(n: Network) -> BtcNetwork {
     match n {
         Network::Mainnet => BtcNetwork::Bitcoin,
         Network::Testnet => BtcNetwork::Testnet,
+        Network::Testnet4 => BtcNetwork::Testnet4,
         Network::Signet => BtcNetwork::Signet,
         Network::Regtest => BtcNetwork::Regtest,
     }
@@ -599,6 +600,7 @@ pub fn gbt_template(ctx: &RpcContext) -> Result<Value, Value> {
             Network::Regtest => rbitcoin_consensus::ChainParams::regtest(),
             Network::Signet => rbitcoin_consensus::ChainParams::signet(),
             Network::Testnet => rbitcoin_consensus::ChainParams::testnet(),
+            Network::Testnet4 => rbitcoin_consensus::ChainParams::testnet4(),
             Network::Mainnet => rbitcoin_consensus::ChainParams::mainnet(),
         });
     let now = ctx
@@ -722,6 +724,7 @@ pub(crate) fn gbt_check_proposal(ctx: &RpcContext, block: &Block) -> Result<(), 
             Network::Regtest => rbitcoin_consensus::ChainParams::regtest(),
             Network::Signet => rbitcoin_consensus::ChainParams::signet(),
             Network::Testnet => rbitcoin_consensus::ChainParams::testnet(),
+            Network::Testnet4 => rbitcoin_consensus::ChainParams::testnet4(),
             Network::Mainnet => rbitcoin_consensus::ChainParams::mainnet(),
         });
     let expected = rbitcoin_consensus::expected_next_bits(

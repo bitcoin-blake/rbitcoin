@@ -47,6 +47,7 @@ impl ChainParams {
         match network {
             rbitcoin_primitives::Network::Mainnet => Self::mainnet(),
             rbitcoin_primitives::Network::Testnet => Self::testnet(),
+            rbitcoin_primitives::Network::Testnet4 => Self::testnet4(),
             rbitcoin_primitives::Network::Signet => Self::signet(),
             rbitcoin_primitives::Network::Regtest => Self::regtest(),
         }
@@ -107,6 +108,24 @@ impl ChainParams {
             bip34_hash: Some(bip34_block_hash(
                 "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8",
             )),
+        }
+    }
+
+    /// Core `CTestNet4Params`: every buried deployment at height 1, BIP34 hash
+    /// null (BIP30 stays on), testnet pow limit, BIP94 enforced.
+    pub fn testnet4() -> Self {
+        let genesis = constants::genesis_block(Network::Testnet4);
+        Self {
+            network: Network::Testnet4,
+            genesis_hash: genesis.block_hash(),
+            pow_limit: Target::MAX_ATTAINABLE_TESTNET,
+            checkpoints: vec![],
+            btc: BtcParams::new(Network::Testnet4),
+            signet_challenge: None,
+            csv_height_overlay: None,
+            segwit_height_overlay: None,
+            subsidy_halving_overlay: None,
+            bip34_hash: None,
         }
     }
 
@@ -445,6 +464,7 @@ pub fn default_milestone_height(network: rbitcoin_primitives::Network) -> u32 {
     match network {
         rbitcoin_primitives::Network::Mainnet => 840_000,
         rbitcoin_primitives::Network::Testnet => 2_500_000,
+        rbitcoin_primitives::Network::Testnet4 => 0,
         rbitcoin_primitives::Network::Signet => 0,
         rbitcoin_primitives::Network::Regtest => 0,
     }
@@ -660,6 +680,39 @@ mod tests {
             p.checkpoint_at(Height(295_000)).unwrap().to_string(),
             "00000000000000004d9b4ef50f0f9d686fd69db2e03af35a100370c64632a983"
         );
+    }
+
+    #[test]
+    fn testnet4_params() {
+        use rbitcoin_primitives::Network;
+        assert_eq!(
+            ChainParams::for_network(Network::Testnet4).network,
+            bitcoin::Network::Testnet4
+        );
+        let t4 = ChainParams::testnet4();
+        assert_eq!(
+            t4.genesis_hash.to_string(),
+            "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
+        );
+        assert_eq!(t4.pow_limit, Target::MAX_ATTAINABLE_TESTNET);
+        assert!(t4.allow_min_difficulty_blocks());
+        assert!(!t4.no_pow_retargeting());
+        assert!(t4.checkpoints.is_empty());
+        assert!(t4.signet_challenge.is_none());
+        assert!(t4.bip34_hash.is_none());
+        for h in [
+            t4.btc.bip34_height,
+            t4.btc.bip65_height,
+            t4.btc.bip66_height,
+        ] {
+            assert_eq!(h, 1);
+        }
+        assert_eq!(t4.csv_height(), 1);
+        assert_eq!(t4.segwit_height(), 1);
+        assert_eq!(t4.taproot_height(), 1);
+        assert!(!t4.bip30_skipped_for_bip34_ancestry(2, Some(t4.genesis_hash)));
+        assert!(check_genesis_hash(&t4, t4.genesis_hash));
+        assert_eq!(genesis_block(&t4).block_hash(), t4.genesis_hash);
     }
 
     #[test]

@@ -317,7 +317,7 @@ fn operator_usage() -> String {
     [--block-version N] [--block-min-tx-fee BTC] [--bytes-per-sigop N] [--block-reserved-sigops N] [--alert-notify CMD] [--startup-notify CMD] \\\n\
     [--max-run-secs N] [--log-level LEVEL] [--api-log PATH] [--asmap PATH] \\\n\
     [--no-seeds] [--no-listen] [--no-discover] [--listen-onion] [--cjdns-reachable] [--smoke] [--inhibit-suspend]\n\n\
-Networks: mainnet|testnet|signet|regtest.\n\
+Networks: mainnet|testnet|testnet4|signet|regtest.\n\
 Custom Signet: --signet-challenge HEX [--signet-block-time SECS].\n\
 Log level: error|warn|info|debug|trace|off (CLI > conf log_level > RBITCOIN_LOG / RUST_LOG).\n\
 API log: --api-log PATH writes one JSON line per Electrum/Esplora/RPC call (also TRACE `api:`).\n\
@@ -325,7 +325,7 @@ Asmap: --asmap PATH loads a Core ip_asn.dat (relative to datadir). Unset tries {
 Milestone: skip script/sig checks at/below HEIGHT.\n\
   Defaults: mainnet 840000 anchored to block 0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5\n\
   (skip only on that header path, and only when header work meets min chain work),\n\
-  signet 0, testnet 2500000, regtest 0. Explicit HEIGHT is height-only. Use 0 for full scripts.\n\
+  signet 0, testnet 2500000, testnet4 0, regtest 0. Explicit HEIGHT is height-only. Use 0 for full scripts.\n\
 Check-blocks: --check-blocks N revalidates the last N confirmed heights on open (default 6; 0 = all).\n\
 Mempool: --mempool-size-mb (default ~300 MiB weight budget).\n\
 Peers: --max-outbound (default 16 live download), --max-inbound (default 125).\n\
@@ -666,7 +666,7 @@ mod tests {
         ] {
             assert!(!h.contains(concat), "help must not advertise {concat}");
         }
-        assert!(h.contains("Networks: mainnet|testnet|signet|regtest."));
+        assert!(h.contains("Networks: mainnet|testnet|testnet4|signet|regtest."));
         assert!(h.contains("[--signet-block-time SECS]"));
         assert!(matches!(
             operator_config_from_args(["rbitcoin-node", "-V"]),
@@ -756,6 +756,7 @@ mod tests {
             ("regtest", Network::Regtest),
             ("signet", Network::Signet),
             ("testnet", Network::Testnet),
+            ("testnet4", Network::Testnet4),
         ] {
             let conf = dir.join(format!("{bare}.conf"));
             std::fs::write(&conf, format!("{bare}\n; also a comment\n\nno_seeds=1\n")).unwrap();

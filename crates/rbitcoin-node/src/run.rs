@@ -1637,6 +1637,7 @@ async fn start_esplora_if_ready(
     let btc_net = match network {
         rbitcoin_primitives::Network::Mainnet => bitcoin::Network::Bitcoin,
         rbitcoin_primitives::Network::Testnet => bitcoin::Network::Testnet,
+        rbitcoin_primitives::Network::Testnet4 => bitcoin::Network::Testnet4,
         rbitcoin_primitives::Network::Signet => bitcoin::Network::Signet,
         rbitcoin_primitives::Network::Regtest => bitcoin::Network::Regtest,
     };
