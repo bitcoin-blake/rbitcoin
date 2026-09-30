@@ -410,9 +410,11 @@ fn run_script_row(
                 .extra
                 .iter()
                 .any(|e| e == "DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM"),
+            unified_sighash: false,
             const_scriptcode: flags.extra.iter().any(|e| e == "CONST_SCRIPTCODE"),
         },
         pre: std::sync::OnceLock::new(),
+        unified_agg: std::sync::OnceLock::new(),
     };
     verify_job_all_inputs(&job).map_err(|e| format!("{e}"))
 }

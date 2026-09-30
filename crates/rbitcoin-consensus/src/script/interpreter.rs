@@ -19,6 +19,8 @@ use std::cell::{Cell, RefCell};
 use bitcoin::hashes::Hash;
 use bitcoin::script::{Instruction, Script};
 use bitcoin::sighash::{Prevouts, SighashCache};
+
+use super::unified_sighash as unified;
 use bitcoin::{Amount, Sequence, Transaction, TxOut};
 
 use super::crypto;
@@ -173,6 +175,10 @@ pub(crate) struct EvalContext<'a> {
     pub witness_pubkeytype: bool,
     /// Reject CODESEPARATOR / FindAndDelete that would mutate scriptCode.
     pub const_scriptcode: bool,
+    /// Knots unified sighash: opted-in signatures use the unified message.
+    pub unified_sighash: bool,
+    /// The job's shared aggregates (`None` in fixture contexts: computed per call).
+    unified_agg: Option<&'a std::sync::OnceLock<super::unified_sighash::UnifiedAggregates>>,
     /// BIP342: instruction index of last executed OP_CODESEPARATOR, or `0xFFFFFFFF`.
     ///
     /// Counted one per instruction, not byte offset.
@@ -271,6 +277,8 @@ impl<'a> EvalContext<'a> {
             minimal_if: false,
             witness_pubkeytype: false,
             const_scriptcode: false,
+            unified_sighash: false,
+            unified_agg: None,
             codeseparator_pos: Cell::new(0xFFFF_FFFF),
             codeseparator_script_off: Cell::new(None),
             cache: RefCell::new(None),
@@ -280,7 +288,9 @@ impl<'a> EvalContext<'a> {
     }
 
     /// Copy standardness / fixture flags from a [`crate::block::ScriptCheckJob`].
-    pub(crate) fn apply_job_flags(mut self, job: &crate::block::ScriptCheckJob) -> Self {
+    pub(crate) fn apply_job_flags(mut self, job: &'a crate::block::ScriptCheckJob) -> Self {
+        self.unified_sighash = job.unified_sighash;
+        self.unified_agg = Some(&job.unified_agg);
         self.minimal_data = job.minimal_data;
         self.nullfail = job.nullfail;
         self.low_s = job.low_s;
@@ -1378,30 +1388,45 @@ fn checksig_schnorr(
     ctx: &EvalContext<'_>,
 ) -> Result<bool, ConsensusError> {
     debug_assert_eq!(pubkey.len(), 32);
-    let (sig_bytes, sighash_ty) = if sig.len() == 64 {
-        (sig, bitcoin::sighash::TapSighashType::Default)
-    } else if sig.len() == 65 {
-        // BIP342: sighash byte must not be 0x00.
-        if sig[64] == 0x00 {
-            return Ok(false);
-        }
-        let ty = bitcoin::sighash::TapSighashType::from_consensus_u8(sig[64])
-            .map_err(|_| ConsensusError::Script("tapscript sighash".into()))?;
-        (&sig[..64], ty)
-    } else {
+    if sig.len() != 64 && sig.len() != 65 {
         return Ok(false);
-    };
+    }
+    // BIP342: sighash byte must not be 0x00.
+    if sig.len() == 65 && sig[64] == 0x00 {
+        return Ok(false);
+    }
     let xonly = bitcoin::key::XOnlyPublicKey::from_slice(pubkey)
         .map_err(|_| ConsensusError::Script("tapscript xonly".into()))?;
-    let schnorr = match bitcoin::secp256k1::schnorr::Signature::from_slice(sig_bytes) {
+    let schnorr = match bitcoin::secp256k1::schnorr::Signature::from_slice(&sig[..64]) {
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
-    let prevouts = Prevouts::All(ctx.prevouts);
     use bitcoin::sighash::Annex;
     use bitcoin::taproot::LeafVersion;
     use bitcoin::TapLeafHash;
     let leaf = TapLeafHash::from_script(ctx.script_code, LeafVersion::TapScript);
+    // Opted in: the unified message with the tapscript tail, in place of BIP341's.
+    if sig.len() == 65 {
+        let tap = unified::TaprootContext {
+            annex: super::p2tr::bip341_annex(&ctx.tx.input[ctx.input_index].witness),
+            leaf: Some((leaf.to_byte_array(), ctx.codeseparator_pos.get())),
+        };
+        if let Some(h) = unified_sighash_in_script(ctx, u32::from(sig[64]), b"", Some(&tap)) {
+            let msg = bitcoin::secp256k1::Message::from_digest(
+                h.map_err(|_| ConsensusError::Script("tapscript sighash".into()))?,
+            );
+            return Ok(
+                crypto::SECP.with(|secp| secp.verify_schnorr(&schnorr, &msg, &xonly).is_ok())
+            );
+        }
+    }
+    let sighash_ty = if sig.len() == 64 {
+        bitcoin::sighash::TapSighashType::Default
+    } else {
+        bitcoin::sighash::TapSighashType::from_consensus_u8(sig[64])
+            .map_err(|_| ConsensusError::Script("tapscript sighash".into()))?
+    };
+    let prevouts = Prevouts::All(ctx.prevouts);
     // BIP341/BIP342: include last OP_CODESEPARATOR instruction index (default
     // 0xFFFFFFFF). `taproot_script_spend_signature_hash` hard-codes the default
     // and would reject multisig leaves that use CODESEPARATOR (signet 90719).
@@ -1426,11 +1451,56 @@ fn checksig_schnorr(
     Ok(crypto::SECP.with(|secp| secp.verify_schnorr(&schnorr, &msg, &xonly).is_ok()))
 }
 
+/// The unified message for an opted-in signature in a script, or `None` when the
+/// signature did not opt in (or the flag is off) and the legacy message applies.
+fn unified_sighash_in_script(
+    ctx: &EvalContext<'_>,
+    ty_raw: u32,
+    script_bytes: &[u8],
+    taproot: Option<&unified::TaprootContext<'_>>,
+) -> Option<Result<[u8; 32], ConsensusError>> {
+    let hash_type = ty_raw as u8;
+    if !ctx.unified_sighash || hash_type & unified::SIGHASH_UNIFIED == 0 {
+        return None;
+    }
+    let script_type = match ctx.sig_version {
+        SigVersion::Base => unified::UnifiedScriptType::Base,
+        SigVersion::WitnessV0 => unified::UnifiedScriptType::WitnessV0,
+        SigVersion::TapScript => unified::UnifiedScriptType::Tapscript,
+    };
+    let owned;
+    let agg = match ctx.unified_agg {
+        Some(lock) => {
+            lock.get_or_init(|| unified::UnifiedAggregates::compute(ctx.tx, ctx.prevouts))
+        }
+        None => {
+            owned = unified::UnifiedAggregates::compute(ctx.tx, ctx.prevouts);
+            &owned
+        }
+    };
+    Some(
+        unified::unified_sighash(
+            ctx.tx,
+            ctx.prevouts,
+            ctx.input_index,
+            hash_type,
+            script_type,
+            script_bytes,
+            taproot,
+            agg,
+        )
+        .ok_or_else(|| ConsensusError::Script("unified sighash".into())),
+    )
+}
+
 fn sighash_for_script(
     ctx: &EvalContext<'_>,
     ty_raw: u32,
     script_bytes: &[u8],
 ) -> Result<[u8; 32], ConsensusError> {
+    if let Some(h) = unified_sighash_in_script(ctx, ty_raw, script_bytes, None) {
+        return h;
+    }
     let script_code = Script::from_bytes(script_bytes);
     match ctx.sig_version {
         SigVersion::Base => {

@@ -3,6 +3,8 @@
 use bitcoin::hashes::Hash;
 use bitcoin::script::{Instruction, Script};
 use bitcoin::sighash::SighashCache;
+
+use super::unified_sighash as unified;
 use bitcoin::Transaction;
 
 use super::crypto;
@@ -33,10 +35,25 @@ pub(crate) fn verify(
 
     let script_code = job.prevouts[input_index].script_pubkey.as_script();
     // Raw hashtype byte (may be 0 — must not normalize to SIGHASH_ALL).
-    let sighash = cache
-        .legacy_signature_hash(input_index, script_code, sighash_ty)
-        .map_err(|_| ConsensusError::Script("p2pkh sighash".into()))?;
-    if crypto::verify_ecdsa(sighash.to_byte_array(), &sig, &pubkey) {
+    let sighash = if job.unified_sighash && (sighash_ty as u8) & unified::SIGHASH_UNIFIED != 0 {
+        unified::unified_sighash(
+            tx,
+            &job.prevouts,
+            input_index,
+            sighash_ty as u8,
+            unified::UnifiedScriptType::Base,
+            script_code.as_bytes(),
+            None,
+            job.unified_aggregates(tx),
+        )
+        .ok_or_else(|| ConsensusError::Script("p2pkh sighash".into()))?
+    } else {
+        cache
+            .legacy_signature_hash(input_index, script_code, sighash_ty)
+            .map_err(|_| ConsensusError::Script("p2pkh sighash".into()))?
+            .to_byte_array()
+    };
+    if crypto::verify_ecdsa(sighash, &sig, &pubkey) {
         Ok(())
     } else {
         Err(ConsensusError::Script("p2pkh ecdsa".into()))
@@ -126,8 +143,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         let err = verify(&job, 0, &job.tx, &mut cache).unwrap_err();

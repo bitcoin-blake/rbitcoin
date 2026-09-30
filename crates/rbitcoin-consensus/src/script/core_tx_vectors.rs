@@ -45,6 +45,7 @@ struct TxFlags {
     null_dummy: bool,
     minimal_data: bool,
     discourage_upgradable_witness: bool,
+    unified_sighash: bool,
     witness_pubkeytype: bool,
     /// SCRIPT_VERIFY_CONST_SCRIPTCODE: reject CODESEPARATOR / FindAndDelete hits.
     const_scriptcode: bool,
@@ -73,6 +74,7 @@ fn all_implemented_flags() -> TxFlags {
         null_dummy: true,
         minimal_data: true,
         discourage_upgradable_witness: true,
+        unified_sighash: false,
         witness_pubkeytype: true,
         const_scriptcode: true,
         cleanstack: true,
@@ -241,8 +243,10 @@ fn flags_to_job(tx: Transaction, prevouts: Vec<TxOut>, flags: &TxFlags) -> Scrip
             witness_active: flags.witness,
             discourage_upgradable_witness: flags.discourage_upgradable_witness,
             const_scriptcode: flags.const_scriptcode,
+            unified_sighash: false,
         },
         pre: std::sync::OnceLock::new(),
+        unified_agg: std::sync::OnceLock::new(),
     }
 }
 

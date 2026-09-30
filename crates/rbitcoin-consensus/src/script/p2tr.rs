@@ -10,6 +10,8 @@ use bitcoin::key::XOnlyPublicKey;
 use bitcoin::script::Script;
 use bitcoin::secp256k1::{Message, Parity};
 use bitcoin::sighash::{Annex, Prevouts, SighashCache, TapSighashType};
+
+use super::unified_sighash as unified;
 use bitcoin::taproot::{TapLeafHash, TapNodeHash, TapTweakHash};
 use bitcoin::{Transaction, Witness};
 
@@ -70,25 +72,48 @@ fn verify_key_path(
         .nth(0)
         .ok_or_else(|| ConsensusError::Script("p2tr sig".into()))?;
 
-    let (sig_bytes, sighash_ty) = if sig_raw.len() == 64 {
-        (sig_raw, TapSighashType::Default)
-    } else if sig_raw.len() == 65 {
-        // BIP341: 65-byte form with sighash byte 0x00 is invalid (Core /
-        // EvalChecksigTapscript). Mirror tapscript `checksig_schnorr`.
-        if sig_raw[64] == 0x00 {
-            return Err(ConsensusError::Script("p2tr sighash type".into()));
-        }
-        let ty = TapSighashType::from_consensus_u8(sig_raw[64])
-            .map_err(|_| ConsensusError::Script("p2tr sighash type".into()))?;
-        (&sig_raw[..64], ty)
-    } else {
+    if sig_raw.len() != 64 && sig_raw.len() != 65 {
         return Err(ConsensusError::Script("p2tr sig len".into()));
-    };
-
+    }
+    // BIP341: 65-byte form with sighash byte 0x00 is invalid (Core /
+    // EvalChecksigTapscript). Mirror tapscript `checksig_schnorr`.
+    if sig_raw.len() == 65 && sig_raw[64] == 0x00 {
+        return Err(ConsensusError::Script("p2tr sighash type".into()));
+    }
     let xonly = XOnlyPublicKey::from_slice(output_key)
         .map_err(|_| ConsensusError::Script("p2tr xonly".into()))?;
-    let sig = bitcoin::secp256k1::schnorr::Signature::from_slice(sig_bytes)
+    let sig = bitcoin::secp256k1::schnorr::Signature::from_slice(&sig_raw[..64])
         .map_err(|_| ConsensusError::Script("p2tr schnorr parse".into()))?;
+
+    // Opted in: the unified message (script type 2) in place of BIP341's.
+    if sig_raw.len() == 65 && job.unified_sighash && sig_raw[64] & unified::SIGHASH_UNIFIED != 0 {
+        let tap = unified::TaprootContext {
+            annex: bip341_annex(&input.witness),
+            leaf: None,
+        };
+        let h = unified::unified_sighash(
+            tx,
+            &job.prevouts,
+            input_index,
+            sig_raw[64],
+            unified::UnifiedScriptType::Taproot,
+            b"",
+            Some(&tap),
+            job.unified_aggregates(tx),
+        )
+        .ok_or_else(|| ConsensusError::Script("p2tr sighash type".into()))?;
+        let msg = Message::from_digest(h);
+        return crypto::SECP.with(|secp| {
+            secp.verify_schnorr(&sig, &msg, &xonly)
+                .map_err(|_| ConsensusError::Script("p2tr schnorr".into()))
+        });
+    }
+    let sighash_ty = if sig_raw.len() == 64 {
+        TapSighashType::Default
+    } else {
+        TapSighashType::from_consensus_u8(sig_raw[64])
+            .map_err(|_| ConsensusError::Script("p2tr sighash type".into()))?
+    };
 
     let prevouts = Prevouts::All(&job.prevouts);
     // BIP341: when the annex is present it is part of spend_type / sighash.
@@ -290,8 +315,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         (job, control)
     }
@@ -371,8 +398,10 @@ mod bip341_tests {
                     witness_active: true,
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
+                    unified_sighash: false,
                 },
                 pre: std::sync::OnceLock::new(),
+                unified_agg: std::sync::OnceLock::new(),
             }
         }
 
@@ -591,8 +620,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         assert!(verify(&job, 0, &job.tx, &mut cache).is_err());
@@ -662,8 +693,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         script::verify_job_all_inputs(&job).expect("p2tr key path");
     }
@@ -728,8 +761,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let err = script::verify_job_all_inputs(&job).expect_err("0x00 sighash must fail");
         let msg = format!("{err}");
@@ -814,8 +849,10 @@ mod bip341_tests {
                     witness_active: true,
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
+                    unified_sighash: false,
                 },
                 pre: std::sync::OnceLock::new(),
+                unified_agg: std::sync::OnceLock::new(),
             };
             let err = script::verify_job_all_inputs(&job).unwrap_err();
             assert!(
@@ -858,8 +895,10 @@ mod bip341_tests {
                     witness_active: true,
                     discourage_upgradable_witness: false,
                     const_scriptcode: false,
+                    unified_sighash: false,
                 },
                 pre: std::sync::OnceLock::new(),
+                unified_agg: std::sync::OnceLock::new(),
             };
             script::verify_job_all_inputs(&job).expect("key path + annex");
         }
@@ -932,8 +971,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         script::verify_job_all_inputs(&job).expect("empty annex payload");
     }
@@ -1030,8 +1071,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         script::verify_job_all_inputs(&job).expect("script path + annex CHECKSIG");
     }
@@ -1116,8 +1159,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         script::verify_job_all_inputs(&job).expect("two-leaf script path");
     }
@@ -1238,8 +1283,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         script::verify_job_all_inputs(&job).expect("CODESEPARATOR chain must verify");
     }
@@ -1291,8 +1338,10 @@ mod bip341_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         assert!(script::verify_job_all_inputs(&job).is_err());
     }

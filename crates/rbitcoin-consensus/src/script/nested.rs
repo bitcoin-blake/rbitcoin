@@ -217,8 +217,10 @@ mod tests {
                 witness_active,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         }
     }
 
@@ -508,8 +510,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut cache = SighashCache::new(&*job.tx);
         let r = try_nested(&job, &mut cache, &crate::TxPrecompute::from_tx(&job.tx));
@@ -539,8 +543,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut cache2 = SighashCache::new(&*job2.tx);
         assert!(matches!(
@@ -581,8 +587,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut c3 = SighashCache::new(&*job3.tx);
         assert!(matches!(
@@ -613,8 +621,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut c4 = SighashCache::new(&*job4.tx);
         assert!(matches!(
@@ -648,8 +658,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut c5 = SighashCache::new(&*job5.tx);
         assert!(try_nested(&job5, &mut c5, &crate::TxPrecompute::from_tx(&job5.tx)).is_none());
@@ -681,8 +693,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         assert!(verify_legacy(&job_e).is_err());
         // Hash mismatch on legacy
@@ -711,8 +725,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         assert!(verify_legacy(&job_h).is_err());
     }
@@ -752,8 +768,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         // Empty witness → p2wsh fails, but nested path reached scripthash copy + call.
         let mut c = SighashCache::new(&*job.tx);
@@ -794,8 +812,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let mut cache = SighashCache::new(&*job2.tx);
         assert!(matches!(
@@ -833,8 +853,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         assert!(verify_legacy(&job3).is_ok());
 

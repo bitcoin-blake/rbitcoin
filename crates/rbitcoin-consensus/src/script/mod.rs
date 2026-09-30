@@ -11,6 +11,7 @@ mod p2pkh;
 mod p2tr;
 mod p2wpkh;
 mod p2wsh;
+pub(crate) mod unified_sighash;
 
 #[cfg(test)]
 mod core_bip341;
@@ -701,8 +702,10 @@ mod verify_routing_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         }
     }
 
@@ -750,6 +753,7 @@ mod verify_routing_tests {
             tx: crate::block::JobTx::owned(tx),
             flags: crate::block::ScriptVerifyFlags::buried(true, true, true, true, true),
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let err = verify_job_all_inputs(&job).expect_err("empty prevouts");
         assert!(format!("{err}").contains("prevout count"), "{err}");
@@ -786,8 +790,10 @@ mod verify_routing_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         assert!(verify_job_all_inputs(&job).is_ok());
 
@@ -819,8 +825,10 @@ mod verify_routing_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         let cache = bitcoin::sighash::SighashCache::new(&*job2.tx);
         let pre = crate::TxPrecompute::from_tx(&job2.tx);
@@ -996,8 +1004,10 @@ mod verify_routing_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         verify_job_all_inputs(&job).expect("pre-taproot v1 ACS");
     }
@@ -1146,8 +1156,10 @@ mod verify_routing_tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         };
         // Bare HASH160 equal of zeros vs hash160([]) — should fail script, not p2sh redeem.
         let err = verify_job_all_inputs(&job).unwrap_err();

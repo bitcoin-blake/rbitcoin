@@ -8,8 +8,13 @@ Added
   flag bits, tx count in the header, the one-off target shift at the fork
   block, the mainnet fork-block headline, the three mainnet fork
   checkpoints, and the 800,000 WU cap while RDTS is active (parent
-  median-time-past below the expiry). RDTS script rules and the unified
-  sighash are not enforced yet.
+  median-time-past below the expiry), and the unified signature hash: a
+  signature whose hash type sets `SIGHASH_UNIFIED` (0x20) is checked
+  against Knots' unified message for every script type from the fork
+  height (Knots' 166 vectors and two testnet4 spends pin it). The RDTS
+  script rules (reduced element sizes, no tapscript `OP_IF`, no annex,
+  34-byte output scripts) are not enforced yet, and relay policy does not
+  yet opt in.
 - **Bitcoin Knots v2 block header.** `bitcoin` comes from
   bitcoin-blake/rust-bitcoin (`v2-header`): a header with version bit 31
   carries the 84-byte Knots extension and hashes with the BLAKE2b

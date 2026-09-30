@@ -803,6 +803,10 @@ pub struct ScriptVerifyFlags {
     pub witness_active: bool,
     pub discourage_upgradable_witness: bool,
     pub const_scriptcode: bool,
+    /// Knots `SCRIPT_VERIFY_UNIFIED_SIGHASH`: a signature whose hash type sets
+    /// `SIGHASH_UNIFIED` is checked against the unified message. A switch, not a
+    /// restriction: on from the BLAKE2b fork height.
+    pub unified_sighash: bool,
 }
 
 impl ScriptVerifyFlags {
@@ -830,6 +834,7 @@ impl ScriptVerifyFlags {
             witness_active: true,
             discourage_upgradable_witness: false,
             const_scriptcode: false,
+            unified_sighash: false,
         }
     }
 
@@ -854,6 +859,7 @@ impl ScriptVerifyFlags {
             witness_active: segwit,
             discourage_upgradable_witness: false,
             const_scriptcode: false,
+            unified_sighash: ctx.params.blake2b_active_at(h),
         }
     }
 }
@@ -872,6 +878,8 @@ pub struct ScriptCheckJob {
     pub(crate) flags: ScriptVerifyFlags,
     /// Lookup/structure `TxPrecompute`. Set on the confirm path; tests lazy-`from_tx`.
     pub(crate) pre: std::sync::OnceLock<JobPre>,
+    /// Unified-sighash aggregates, computed on the first opted-in signature.
+    pub(crate) unified_agg: std::sync::OnceLock<crate::script::unified_sighash::UnifiedAggregates>,
 }
 
 impl Deref for ScriptCheckJob {
@@ -942,6 +950,7 @@ impl ScriptCheckJob {
             tx,
             flags,
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         }
     }
 
@@ -965,6 +974,16 @@ impl ScriptCheckJob {
     }
 
     #[inline]
+    /// The unified-sighash aggregates of this job's transaction.
+    pub(crate) fn unified_aggregates(
+        &self,
+        tx: &Transaction,
+    ) -> &crate::script::unified_sighash::UnifiedAggregates {
+        self.unified_agg.get_or_init(|| {
+            crate::script::unified_sighash::UnifiedAggregates::compute(tx, &self.prevouts)
+        })
+    }
+
     pub(crate) fn pre(&self) -> &rbitcoin_query::TxPrecompute {
         match self.job_pre() {
             JobPre::Owned(a) => a.as_ref(),

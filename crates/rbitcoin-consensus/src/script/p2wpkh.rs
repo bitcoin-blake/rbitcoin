@@ -3,6 +3,7 @@
 use bitcoin::Transaction;
 
 use super::crypto;
+use super::unified_sighash as unified;
 use crate::block::ScriptCheckJob;
 use crate::error::ConsensusError;
 use crate::TxPrecompute;
@@ -47,8 +48,17 @@ pub(crate) fn verify(
 
     let amount = job.prevouts[input_index].value;
     let spk_script = job.prevouts[input_index].script_pubkey.as_script();
-    let sighash =
-        crypto::bip143_p2wpkh_signature_hash(tx, input_index, spk_script, amount, sighash_ty, pre)?;
+    let sighash = match unified_p2wpkh(job, tx, input_index, sighash_ty, keyhash)? {
+        Some(h) => h,
+        None => crypto::bip143_p2wpkh_signature_hash(
+            tx,
+            input_index,
+            spk_script,
+            amount,
+            sighash_ty,
+            pre,
+        )?,
+    };
     if crypto::verify_ecdsa(sighash, &sig, &pubkey) {
         Ok(())
     } else {
@@ -91,13 +101,43 @@ pub(crate) fn verify_with_keyhash(
 
     let amount = job.prevouts[input_index].value;
     let spk = bitcoin::script::Script::from_bytes(witness_program);
-    let sighash =
-        crypto::bip143_p2wpkh_signature_hash(tx, input_index, spk, amount, sighash_ty, pre)?;
+    let sighash = match unified_p2wpkh(job, tx, input_index, sighash_ty, keyhash)? {
+        Some(h) => h,
+        None => {
+            crypto::bip143_p2wpkh_signature_hash(tx, input_index, spk, amount, sighash_ty, pre)?
+        }
+    };
     if crypto::verify_ecdsa(sighash, &sig, &pubkey) {
         Ok(())
     } else {
         Err(ConsensusError::Script("p2wpkh ecdsa".into()))
     }
+}
+
+/// The unified message for an opted-in P2WPKH signature (script type 1, the
+/// implied P2PKH `scriptCode`), or `None` when the legacy BIP143 message applies.
+fn unified_p2wpkh(
+    job: &ScriptCheckJob,
+    tx: &Transaction,
+    input_index: usize,
+    sighash_ty: u32,
+    keyhash: &[u8],
+) -> Result<Option<[u8; 32]>, ConsensusError> {
+    if !job.unified_sighash || (sighash_ty as u8) & unified::SIGHASH_UNIFIED == 0 {
+        return Ok(None);
+    }
+    unified::unified_sighash(
+        tx,
+        &job.prevouts,
+        input_index,
+        sighash_ty as u8,
+        unified::UnifiedScriptType::WitnessV0,
+        &unified::p2wpkh_script_code(keyhash),
+        None,
+        job.unified_aggregates(tx),
+    )
+    .map(Some)
+    .ok_or_else(|| ConsensusError::Script("p2wpkh sighash".into()))
 }
 
 #[cfg(test)]
@@ -147,8 +187,10 @@ mod tests {
                 witness_active: true,
                 discourage_upgradable_witness: false,
                 const_scriptcode: false,
+                unified_sighash: false,
             },
             pre: std::sync::OnceLock::new(),
+            unified_agg: std::sync::OnceLock::new(),
         }
     }
 
