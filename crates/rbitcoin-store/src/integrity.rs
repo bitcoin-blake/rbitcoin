@@ -9,7 +9,6 @@
 //! can be clamped before revalidation.
 
 use crate::error::StoreError;
-use crate::header_table::block_header_hash;
 use crate::store::Store;
 use bitcoin_hashes::{sha256, Hash, HashEngine};
 use rbitcoin_primitives::{schema_file_openable, Fk, Height, SCHEMA_VERSION, STORE_MAGIC};
@@ -304,16 +303,7 @@ impl Store {
             if !rec.prev_fk.is_null() {
                 return Err("genesis prev_fk non-null");
             }
-            let zeros = [0u8; 32];
-            let expect = block_header_hash(
-                rec.version,
-                &zeros,
-                &rec.merkle_root,
-                rec.timestamp,
-                rec.bits,
-                rec.nonce,
-            );
-            if expect != rec.hash {
+            if rec.block_hash(&[0u8; 32]) != rec.hash {
                 return Err("genesis header hash mismatch");
             }
         } else {
@@ -332,15 +322,7 @@ impl Store {
                 Ok(p) => p,
                 Err(_) => return Err("parent header load"),
             };
-            let expect = block_header_hash(
-                rec.version,
-                &parent.hash,
-                &rec.merkle_root,
-                rec.timestamp,
-                rec.bits,
-                rec.nonce,
-            );
-            if expect != rec.hash {
+            if rec.block_hash(&parent.hash) != rec.hash {
                 return Err("header hash mismatch vs parent");
             }
         }
@@ -490,9 +472,18 @@ mod tests {
         let bits = 0x207fffff;
         let nonce = u32::from(salt);
         let hash = if prev.is_null() {
-            block_header_hash(version, &[0u8; 32], &merkle, timestamp, bits, nonce)
+            crate::header_table::block_header_hash(
+                version, &[0u8; 32], &merkle, timestamp, bits, nonce,
+            )
         } else {
-            block_header_hash(version, &parent_hash, &merkle, timestamp, bits, nonce)
+            crate::header_table::block_header_hash(
+                version,
+                &parent_hash,
+                &merkle,
+                timestamp,
+                bits,
+                nonce,
+            )
         };
         HeaderRecord {
             prev_fk: prev,
@@ -504,6 +495,7 @@ mod tests {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         }
     }
 

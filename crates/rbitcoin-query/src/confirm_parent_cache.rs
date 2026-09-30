@@ -155,6 +155,7 @@ mod tests {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         }
     }
 

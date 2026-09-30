@@ -821,6 +821,7 @@ dependencies = [
 name = "rbitcoin-store"
 version = "0.7.99"
 dependencies = [
+ "bitcoin",
  "bitcoin_hashes 0.14.101",
  "getrandom 0.4.3",
  "io-uring",

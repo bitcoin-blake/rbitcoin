@@ -848,6 +848,7 @@ mod tests {
                 hash: [0u8; 32],
                 size: 0,
                 weight: 0,
+                v2: None,
             },
             tx_fks: Vec::new(),
             txids: Vec::new(),
@@ -1102,6 +1103,7 @@ mod tests {
             hash: [0u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         }
     }
 

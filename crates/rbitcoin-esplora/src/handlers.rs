@@ -1970,6 +1970,7 @@ mod pure_helper_tests {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let ta = TxApply {
             tx: TxRecord {

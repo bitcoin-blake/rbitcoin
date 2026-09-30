@@ -1696,6 +1696,7 @@ fn ibd_confirm_pin_fault() {
         hash: hash1,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut spend_txid = [0u8; 32];
     spend_txid[0] = 0x11;

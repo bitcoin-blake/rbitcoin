@@ -177,10 +177,14 @@ pub fn validate_block_structure_with_pres(
 
     let t_walk = Instant::now();
     let tx_count_vi = bitcoin::consensus::encode::VarInt(n as u64).size();
-    let base = 80usize
+    let base = block
+        .header
+        .size()
         .saturating_add(tx_count_vi)
         .saturating_add(pres.iter().map(|p| p.base_size).sum());
-    let total = 80usize
+    let total = block
+        .header
+        .size()
         .saturating_add(tx_count_vi)
         .saturating_add(pres.iter().map(|p| p.total_size).sum());
     let weight_wu = (base.saturating_mul(3).saturating_add(total)) as u64;

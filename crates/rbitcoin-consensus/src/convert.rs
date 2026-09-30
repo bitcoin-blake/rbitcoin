@@ -16,6 +16,7 @@ pub fn header_to_record(prev_fk: Fk, header: &Header, hash: [u8; 32]) -> HeaderR
         nonce: header.nonce,
         merkle_root: header.merkle_root.to_byte_array(),
         hash,
+        v2: header.v2,
         size: 0,
         weight: 0,
     }

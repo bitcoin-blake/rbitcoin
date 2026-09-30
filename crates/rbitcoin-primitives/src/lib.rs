@@ -115,7 +115,7 @@ pub const STORE_MAGIC: [u8; 4] = *b"RBT1";
 ///         Refuse packed schema-13/14 Class A with txs; refuse materialized page-era SH.
 /// **14:** Class B SH head = Empty/Inline/Paged (4 KiB page chains); refuse schema-13 slabs.
 /// **13:** dense `txid.body` sidefile; Class A packed body meta **without** leading txid.
-pub const SCHEMA_VERSION: u16 = 26;
+pub const SCHEMA_VERSION: u16 = 27;
 
 /// True if `ver` may appear in store `meta` / table headers this binary can open.
 ///
@@ -422,8 +422,9 @@ mod tests {
     #[test]
     fn constants_stable() {
         assert_eq!(STORE_MAGIC, *b"RBT1");
-        assert_eq!(SCHEMA_VERSION, 26);
+        assert_eq!(SCHEMA_VERSION, 27);
         assert!(!VERSION.is_empty());
+        assert!(schema_file_openable(27));
         assert!(schema_file_openable(26));
         assert!(schema_file_openable(25));
         assert!(schema_file_openable(24));
@@ -439,8 +440,20 @@ mod tests {
         assert!(schema_file_openable(14));
         assert!(schema_file_openable(13));
         assert!(!schema_file_openable(12));
-        assert!(!schema_file_openable(27));
+        assert!(!schema_file_openable(28));
         assert!(!schema_file_openable(0));
+    }
+
+    #[test]
+    fn open_schema27_meta_refused_by_v26_gate() {
+        const SCHEMA26_MAX: u16 = 26;
+        fn schema26_binary_openable(ver: u16) -> bool {
+            (13..=SCHEMA26_MAX).contains(&ver)
+        }
+        assert!(!schema26_binary_openable(27));
+        assert!(schema26_binary_openable(26));
+        assert!(schema_file_openable(26));
+        assert!(schema_file_openable(27));
     }
 
     #[test]

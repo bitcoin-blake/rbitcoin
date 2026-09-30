@@ -1,6 +1,8 @@
 use crate::error::StoreError;
 use crate::file::{TableFile, FILE_HEADER_LEN};
 use crate::hashhead::{initial_slots_for, HashHead, HeadScale};
+use bitcoin::block::{Header, HeaderV2, Version};
+use bitcoin::{BlockHash, CompactTarget, TxMerkleNode};
 use bitcoin_hashes::{sha256, Hash, HashEngine};
 use rbitcoin_primitives::{Fk, TableKind};
 use std::path::{Path, PathBuf};
@@ -12,20 +14,28 @@ pub const HEADER_HEAD_DIR_REFUSE: &str =
 pub const HEADER_HEAD_EMPTY_REFUSE: &str =
     "header.head is empty at target slots; wipe header.head, header.head.mlt, and header.body and reindex";
 
-/// Live `header.body` record: consensus fields only. See SCHEMA.md.
-pub const HEADER_RECORD_LEN: usize = 88;
+/// Live `header.body` record: consensus fields plus the Knots v2 extension
+/// (zeros for a classic header). See SCHEMA.md.
+pub const HEADER_RECORD_LEN: usize = HEADER_RECORD_LEN_V26 + HeaderV2::SIZE; // 172
+/// Schema 26 record: the 88 consensus bytes only. Open widens to 172.
+pub const HEADER_RECORD_LEN_V26: usize = 88;
 /// Schema 24/25 record. Open strips the trailing `size`/`weight` back to 88.
 pub const HEADER_RECORD_LEN_V24: usize = 96;
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct HeaderRecord {
     pub prev_fk: Fk,
+    /// Base version: the wire version without [`Header::V2_VERSION_FLAG`], which the
+    /// row's `version` column carries when `v2` is present.
     pub version: i32,
+    /// Consensus time (a v2 header's wire time plus its offset).
     pub timestamp: u32,
     pub bits: u32,
     pub nonce: u32,
     pub merkle_root: [u8; 32],
     pub hash: [u8; 32],
+    /// Knots v2 extension, `None` for a classic 80-byte header.
+    pub v2: Option<HeaderV2>,
     /// Not written to `header.body`. Block size comes from `txstat`.
     pub size: u32,
     /// Not written to `header.body`. Block weight comes from `txstat`.
@@ -36,12 +46,29 @@ impl HeaderRecord {
     pub fn encode(&self) -> [u8; HEADER_RECORD_LEN] {
         let mut out = [0u8; HEADER_RECORD_LEN];
         out[0..8].copy_from_slice(&self.prev_fk.0.to_le_bytes());
-        out[8..12].copy_from_slice(&self.version.to_le_bytes());
+        let wire_version = match self.v2 {
+            Some(_) => self.version as u32 | Header::V2_VERSION_FLAG,
+            None => self.version as u32,
+        };
+        out[8..12].copy_from_slice(&wire_version.to_le_bytes());
         out[12..16].copy_from_slice(&self.timestamp.to_le_bytes());
         out[16..20].copy_from_slice(&self.bits.to_le_bytes());
         out[20..24].copy_from_slice(&self.nonce.to_le_bytes());
         out[24..56].copy_from_slice(&self.merkle_root);
         out[56..88].copy_from_slice(&self.hash);
+        if let Some(v2) = &self.v2 {
+            let tail = &mut out[88..172];
+            tail[0..4].copy_from_slice(&v2.nonce2.to_le_bytes());
+            tail[4..8].copy_from_slice(&v2.nonce3.to_le_bytes());
+            tail[8..24].copy_from_slice(&v2.extranonce);
+            tail[24..28].copy_from_slice(&v2.time_offset.to_le_bytes());
+            tail[28..30].copy_from_slice(&v2.tx_count.to_le_bytes());
+            tail[30] = v2.flags;
+            tail[31] = v2.xor_key_mask_clear_bits;
+            tail[32..48].copy_from_slice(&v2.xor_key);
+            tail[48..52].copy_from_slice(&v2.height.to_le_bytes());
+            tail[52..84].copy_from_slice(&v2.mm_rhs);
+        }
         out
     }
 
@@ -49,17 +76,62 @@ impl HeaderRecord {
         if buf.len() < HEADER_RECORD_LEN {
             return Err(StoreError::Corrupt("short header record"));
         }
+        let wire_version = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+        let v2 = if wire_version & Header::V2_VERSION_FLAG != 0 {
+            let tail = &buf[88..172];
+            Some(HeaderV2 {
+                nonce2: u32::from_le_bytes(tail[0..4].try_into().unwrap()),
+                nonce3: u32::from_le_bytes(tail[4..8].try_into().unwrap()),
+                extranonce: tail[8..24].try_into().unwrap(),
+                time_offset: u32::from_le_bytes(tail[24..28].try_into().unwrap()),
+                tx_count: u16::from_le_bytes(tail[28..30].try_into().unwrap()),
+                flags: tail[30],
+                xor_key_mask_clear_bits: tail[31],
+                xor_key: tail[32..48].try_into().unwrap(),
+                height: i32::from_le_bytes(tail[48..52].try_into().unwrap()),
+                mm_rhs: tail[52..84].try_into().unwrap(),
+            })
+        } else {
+            None
+        };
         Ok(Self {
             prev_fk: Fk(u64::from_le_bytes(buf[0..8].try_into().unwrap())),
-            version: i32::from_le_bytes(buf[8..12].try_into().unwrap()),
+            version: (wire_version & !Header::V2_VERSION_FLAG) as i32,
             timestamp: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
             bits: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
             nonce: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
             merkle_root: buf[24..56].try_into().unwrap(),
             hash: buf[56..88].try_into().unwrap(),
+            v2,
             size: 0,
             weight: 0,
         })
+    }
+
+    /// The wire header this row stores, given the parent's hash.
+    pub fn wire_header(&self, prev_hash: &[u8; 32]) -> Header {
+        Header {
+            version: Version::from_consensus(self.version),
+            prev_blockhash: BlockHash::from_byte_array(*prev_hash),
+            merkle_root: TxMerkleNode::from_byte_array(self.merkle_root),
+            time: self.timestamp,
+            bits: CompactTarget::from_consensus(self.bits),
+            nonce: self.nonce,
+            v2: self.v2,
+        }
+    }
+
+    /// Serialized header length: 80, or 164 with the v2 extension.
+    pub fn header_size(&self) -> u64 {
+        match self.v2 {
+            Some(_) => Header::V2_SIZE as u64,
+            None => Header::SIZE as u64,
+        }
+    }
+
+    /// Block hash of the header this row stores, internal byte order.
+    pub fn block_hash(&self, prev_hash: &[u8; 32]) -> [u8; 32] {
+        self.wire_header(prev_hash).block_hash().to_byte_array()
     }
 }
 
@@ -303,9 +375,15 @@ impl HeaderTable {
         if body_len == 0 {
             return Ok(());
         }
-        let n88 = body_len / HEADER_RECORD_LEN as u64;
+        if body_len % HEADER_RECORD_LEN as u64 == 0 {
+            let occ = header_head_occupied(dir)?;
+            if occ == body_len / HEADER_RECORD_LEN as u64 || occ == 0 {
+                return Ok(());
+            }
+        }
+        let n88 = body_len / HEADER_RECORD_LEN_V26 as u64;
         let n96 = body_len / HEADER_RECORD_LEN_V24 as u64;
-        let aligned88 = body_len % HEADER_RECORD_LEN as u64 == 0;
+        let aligned88 = body_len % HEADER_RECORD_LEN_V26 as u64 == 0;
         let aligned96 = body_len % HEADER_RECORD_LEN_V24 as u64 == 0;
         let n = if aligned96 && aligned88 {
             let occ = header_head_occupied(dir)?;
@@ -326,13 +404,75 @@ impl HeaderTable {
         };
         let dst = TableFile::create(&grow, TableKind::Header)?;
         let mut blob = Vec::new();
-        blob.try_reserve_exact(n as usize * HEADER_RECORD_LEN)
+        blob.try_reserve_exact(n as usize * HEADER_RECORD_LEN_V26)
             .map_err(|_| StoreError::Corrupt("header body rewrite OOM"))?;
         for i in 0..n {
             let off = FILE_HEADER_LEN as u64 + i * HEADER_RECORD_LEN_V24 as u64;
             let mut raw = [0u8; HEADER_RECORD_LEN_V24];
             src.read_at(off, &mut raw)?;
-            blob.extend_from_slice(&raw[..HEADER_RECORD_LEN]);
+            blob.extend_from_slice(&raw[..HEADER_RECORD_LEN_V26]);
+        }
+        let new_len = FILE_HEADER_LEN as u64 + n * HEADER_RECORD_LEN_V26 as u64;
+        dst.write_at(FILE_HEADER_LEN as u64, &blob)?;
+        dst.set_logical_len(new_len)?;
+        dst.flush()?;
+        drop(dst);
+        drop(src);
+        std::fs::rename(&grow, &path).map_err(|e| StoreError::io(&path, e))?;
+        Ok(())
+    }
+
+    /// Schema 26 → 27: widen each 88 B row to 172 B (zero v2 tail).
+    ///
+    /// Same shape as [`Self::rewrite_v24_body_to_88`]: `header.body.grow`,
+    /// fsync, rename. A body that is already 172 B is left alone. Occupied
+    /// `header.head` disambiguates lengths that divide both 88 and 172.
+    pub(crate) fn rewrite_v26_body_to_172(dir: &Path) -> Result<(), StoreError> {
+        let path = dir.join("header.body");
+        if !path.is_file() {
+            return Ok(());
+        }
+        let grow = {
+            let mut p = path.as_os_str().to_os_string();
+            p.push(".grow");
+            PathBuf::from(p)
+        };
+        let _ = std::fs::remove_file(&grow);
+        let src = TableFile::open(&path, TableKind::Header)?;
+        let body_len = src.logical_len().saturating_sub(FILE_HEADER_LEN as u64);
+        if body_len == 0 {
+            return Ok(());
+        }
+        let n88 = body_len / HEADER_RECORD_LEN_V26 as u64;
+        let n172 = body_len / HEADER_RECORD_LEN as u64;
+        let aligned88 = body_len % HEADER_RECORD_LEN_V26 as u64 == 0;
+        let aligned172 = body_len % HEADER_RECORD_LEN as u64 == 0;
+        let n = if aligned172 && aligned88 {
+            let occ = header_head_occupied(dir)?;
+            if occ == n172 || occ == 0 {
+                return Ok(());
+            }
+            if occ == n88 {
+                n88
+            } else {
+                return Err(StoreError::Corrupt("header body size"));
+            }
+        } else if aligned172 {
+            return Ok(());
+        } else if aligned88 {
+            n88
+        } else {
+            return Err(StoreError::Corrupt("header body size"));
+        };
+        let dst = TableFile::create(&grow, TableKind::Header)?;
+        let mut blob = Vec::new();
+        blob.try_reserve_exact(n as usize * HEADER_RECORD_LEN)
+            .map_err(|_| StoreError::Corrupt("header body rewrite OOM"))?;
+        for i in 0..n {
+            let off = FILE_HEADER_LEN as u64 + i * HEADER_RECORD_LEN_V26 as u64;
+            let mut raw = [0u8; HEADER_RECORD_LEN];
+            src.read_at(off, &mut raw[..HEADER_RECORD_LEN_V26])?;
+            blob.extend_from_slice(&raw);
         }
         let new_len = FILE_HEADER_LEN as u64 + n * HEADER_RECORD_LEN as u64;
         dst.write_at(FILE_HEADER_LEN as u64, &blob)?;
@@ -426,15 +566,7 @@ impl HeaderTable {
     }
 
     fn check_parent_edge(rec: &HeaderRecord, parent: &HeaderRecord) -> Result<(), StoreError> {
-        let expect = block_header_hash(
-            rec.version,
-            &parent.hash,
-            &rec.merkle_root,
-            rec.timestamp,
-            rec.bits,
-            rec.nonce,
-        );
-        if expect != rec.hash {
+        if rec.block_hash(&parent.hash) != rec.hash {
             return Err(StoreError::Corrupt(
                 "header prev_fk does not match block hash (false parent edge)",
             ));
@@ -522,6 +654,7 @@ mod tests {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         }
     }
 
@@ -588,6 +721,7 @@ mod tests {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         }
     }
 
@@ -901,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn header_record_roundtrip_is_88_bytes() {
+    fn header_record_roundtrip_is_172_bytes() {
         let rec = HeaderRecord {
             size: 285,
             weight: 1140,
@@ -909,11 +1043,144 @@ mod tests {
         };
         let enc = rec.encode();
         assert_eq!(enc.len(), HEADER_RECORD_LEN);
+        assert_eq!(HEADER_RECORD_LEN, 172);
+        assert!(
+            enc[88..].iter().all(|b| *b == 0),
+            "classic row has a zero tail"
+        );
+        assert_eq!(
+            &enc[8..12],
+            &1u32.to_le_bytes(),
+            "no v2 flag on a classic row"
+        );
         let back = HeaderRecord::decode(&enc).unwrap();
         assert_eq!(back.size, 0);
         assert_eq!(back.weight, 0);
         assert_eq!(back.hash, rec.hash);
+        assert_eq!(back.v2, None);
+        assert_eq!(back.header_size(), 80);
         assert!(HeaderRecord::decode(&[0u8; 40]).is_err());
+        assert!(HeaderRecord::decode(&[0u8; HEADER_RECORD_LEN_V26]).is_err());
+    }
+
+    /// Bitcoin Knots `block_header_v2.json`, vector `profile_0_time_offset`.
+    const KNOTS_V2_HEADER_HEX: &str = "000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab";
+    const KNOTS_V2_BLOCK_HASH: &str =
+        "4b495dcf05d70a49785b799b22284fbcd9dd1209237c53c87e4674b15587d704";
+
+    fn knots_v2_header() -> Header {
+        let raw = rbitcoin_primitives::hex_decode(KNOTS_V2_HEADER_HEX).unwrap();
+        bitcoin::consensus::deserialize(&raw).unwrap()
+    }
+
+    fn record_of(prev_fk: Fk, header: &Header) -> HeaderRecord {
+        HeaderRecord {
+            prev_fk,
+            version: header.version.to_consensus(),
+            timestamp: header.time,
+            bits: header.bits.to_consensus(),
+            nonce: header.nonce,
+            merkle_root: header.merkle_root.to_byte_array(),
+            hash: header.block_hash().to_byte_array(),
+            v2: header.v2,
+            size: 0,
+            weight: 0,
+        }
+    }
+
+    #[test]
+    fn header_record_v2_roundtrip_keeps_extension_and_hash() {
+        let header = knots_v2_header();
+        assert_eq!(header.block_hash().to_string(), KNOTS_V2_BLOCK_HASH);
+        let rec = record_of(Fk::NULL, &header);
+        let enc = rec.encode();
+        assert_eq!(
+            u32::from_le_bytes(enc[8..12].try_into().unwrap()) & Header::V2_VERSION_FLAG,
+            Header::V2_VERSION_FLAG,
+            "the version column carries the v2 flag"
+        );
+        assert_eq!(
+            &enc[12..16],
+            &header.time.to_le_bytes(),
+            "consensus time in the row"
+        );
+        let back = HeaderRecord::decode(&enc).unwrap();
+        assert_eq!(back, rec);
+        assert_eq!(back.version, header.version.to_consensus());
+        assert_eq!(back.header_size(), 164);
+        let rebuilt = back.wire_header(&header.prev_blockhash.to_byte_array());
+        assert_eq!(rebuilt, header);
+        assert_eq!(
+            back.block_hash(&header.prev_blockhash.to_byte_array()),
+            rec.hash
+        );
+    }
+
+    #[test]
+    fn ensure_checks_a_v2_child_by_its_blake2b_hash() {
+        let dir = tmp();
+        let t = HeaderTable::create_tiny(&dir).unwrap();
+        let header = knots_v2_header();
+        let parent = sample(header.prev_blockhash.to_byte_array());
+        let parent_fk = t.ensure(&parent).unwrap();
+        let child = record_of(parent_fk, &header);
+        let child_fk = t.ensure(&child).unwrap();
+        assert_ne!(child_fk, parent_fk);
+        let got = t.get(child_fk).unwrap();
+        assert_eq!(got.v2, header.v2);
+        assert_eq!(got.hash, header.block_hash().to_byte_array());
+
+        let mut false_edge = child.clone();
+        false_edge.hash[0] ^= 1;
+        assert!(
+            t.ensure(&false_edge).is_err(),
+            "a v2 child is checked with the v2 hash"
+        );
+        let mut sha256d_hash = child.clone();
+        sha256d_hash.hash = block_header_hash(
+            child.version,
+            &parent.hash,
+            &child.merkle_root,
+            child.timestamp,
+            child.bits,
+            child.nonce,
+        );
+        assert!(
+            t.ensure(&sha256d_hash).is_err(),
+            "sha256d of the prefix is not the v2 hash"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rewrite_v26_header_body_widens_rows() {
+        let dir = tmp();
+        let rec = sample([0x22; 32]);
+        {
+            let body = TableFile::create(dir.join("header.body"), TableKind::Header).unwrap();
+            let raw = rec.encode();
+            body.write_at(FILE_HEADER_LEN as u64, &raw[..HEADER_RECORD_LEN_V26])
+                .unwrap();
+            body.set_logical_len(FILE_HEADER_LEN as u64 + HEADER_RECORD_LEN_V26 as u64)
+                .unwrap();
+            body.flush().unwrap();
+            let h = HashHead::create_with_slots(dir.join("header.head"), 64).unwrap();
+            h.insert(&rec.hash, Fk(1)).unwrap();
+            h.flush().unwrap();
+        }
+        assert!(
+            HeaderTable::open_tiny(&dir).is_err(),
+            "an 88 B body does not open as-is"
+        );
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
+        let t = HeaderTable::open_tiny(&dir).unwrap();
+        assert_eq!(t.get(Fk(1)).unwrap(), rec);
+        assert_eq!(t.count(), 1);
+        drop(t);
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
+        let t = HeaderTable::open_tiny(&dir).unwrap();
+        assert_eq!(t.get(Fk(1)).unwrap(), rec, "already 172 B is a no-op");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -923,7 +1190,7 @@ mod tests {
         {
             let body = TableFile::create(dir.join("header.body"), TableKind::Header).unwrap();
             let mut raw = [0u8; HEADER_RECORD_LEN_V24];
-            raw[..HEADER_RECORD_LEN].copy_from_slice(&rec.encode());
+            raw[..HEADER_RECORD_LEN_V26].copy_from_slice(&rec.encode()[..HEADER_RECORD_LEN_V26]);
             raw[88..92].copy_from_slice(&285u32.to_le_bytes());
             raw[92..96].copy_from_slice(&1140u32.to_le_bytes());
             body.write_at(FILE_HEADER_LEN as u64, &raw).unwrap();
@@ -935,6 +1202,7 @@ mod tests {
             h.flush().unwrap();
         }
         HeaderTable::rewrite_v24_body_to_88(&dir).unwrap();
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
         let t = HeaderTable::open_tiny(&dir).unwrap();
         let got = t.get(Fk(1)).unwrap();
         assert_eq!(got.hash, rec.hash);
@@ -974,6 +1242,7 @@ mod tests {
         t.flush().unwrap();
         drop(t);
         HeaderTable::rewrite_v24_body_to_88(&dir).unwrap();
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
         let t = HeaderTable::open_tiny(&dir).unwrap();
         assert_eq!(t.count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -990,7 +1259,8 @@ mod tests {
             let mut blob = Vec::with_capacity(n as usize * HEADER_RECORD_LEN_V24);
             for rec in &recs {
                 let mut raw = [0u8; HEADER_RECORD_LEN_V24];
-                raw[..HEADER_RECORD_LEN].copy_from_slice(&rec.encode());
+                raw[..HEADER_RECORD_LEN_V26]
+                    .copy_from_slice(&rec.encode()[..HEADER_RECORD_LEN_V26]);
                 raw[88..92].copy_from_slice(&7u32.to_le_bytes());
                 blob.extend_from_slice(&raw);
             }
@@ -1005,6 +1275,7 @@ mod tests {
             h.flush().unwrap();
         }
         HeaderTable::rewrite_v24_body_to_88(&dir).unwrap();
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
         let t = HeaderTable::open_tiny(&dir).unwrap();
         assert_eq!(t.count(), n);
         for (i, rec) in recs.iter().enumerate() {
@@ -1023,9 +1294,9 @@ mod tests {
         let recs: Vec<HeaderRecord> = (0..n).map(|i| sample([0xB0 + i as u8; 32])).collect();
         {
             let body = TableFile::create(dir.join("header.body"), TableKind::Header).unwrap();
-            let mut blob = Vec::with_capacity(n as usize * HEADER_RECORD_LEN);
+            let mut blob = Vec::with_capacity(n as usize * HEADER_RECORD_LEN_V26);
             for rec in &recs {
-                blob.extend_from_slice(&rec.encode());
+                blob.extend_from_slice(&rec.encode()[..HEADER_RECORD_LEN_V26]);
             }
             body.write_at(FILE_HEADER_LEN as u64, &blob).unwrap();
             body.set_logical_len(FILE_HEADER_LEN as u64 + blob.len() as u64)
@@ -1039,9 +1310,11 @@ mod tests {
         }
         let before = std::fs::metadata(dir.join("header.body")).unwrap().len();
         HeaderTable::rewrite_v24_body_to_88(&dir).unwrap();
+        HeaderTable::rewrite_v26_body_to_172(&dir).unwrap();
         assert_eq!(
             std::fs::metadata(dir.join("header.body")).unwrap().len(),
-            before
+            before + n * (HEADER_RECORD_LEN - HEADER_RECORD_LEN_V26) as u64,
+            "v24 keeps every row; the widen adds the v2 tail to each"
         );
         let t = HeaderTable::open_tiny(&dir).unwrap();
         assert_eq!(t.count(), n);

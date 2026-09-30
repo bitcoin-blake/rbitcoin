@@ -118,6 +118,7 @@ Occupied 15–20 LAYOUT17 Class A with creates hits the same refuse (old flags+u
 **22→23 open:** occupied Class A rewrites `create.loc.ovf` 12 B rows (`fk:u64` + two u16) to 16 B (`fk:u64` + two u32) and `store/meta` to 23. Empty 22 rewrites `meta`. A 22 binary refuses 23 `meta`. Spent vin stays u16 (stripped input ≥ ~41 B ⇒ ≲24k vins in a 1 MB block; widening would bump the 8 B spent slot).
 **23→24 open** (schema 24/25 binaries): rewrote `header.body` 88 B rows to 96 B. This binary does not expand. An 88 B body stays 88 B and `meta` rewrites to 26.
 **24/25→26 open:** rewrite each 96 B `header.body` row to 88 B (drop trailing `size`/`weight`) via `header.body.grow` then rename; rewrite `meta` to 26. A body that is already 88 B is unchanged. A 25 binary refuses 26 `meta`. Crash with leftover `.grow` discards it and retries.
+**26→27 open:** rewrite each 88 B `header.body` row to 172 B (zero v2 tail) via `header.body.grow` then rename; rewrite `meta` to 27. A 24/25 body is stripped to 88 B first. A body that is already 172 B is unchanged (occupied `header.head` disambiguates lengths that divide both). A 26 binary refuses 27 `meta`.
 **24→25 open:** rewrite `meta` to 25; create or zero-extend `txstat.body` to `create.loc` count. Do **not** rewrite `txout.body`. Unlink leftover `txfixed.body`. A 24 binary refuses 25 `meta`.
 **Endianness:** little-endian for all multi-byte integers.
 
@@ -359,22 +360,39 @@ Used for Class A `txout` / `seqsigwit` / `spent` (and historically packed `tx.bo
 
 ## Class A — headers
 
-### `header.body` record (fixed 88 bytes)
+### `header.body` record (fixed 172 bytes)
 
-Consensus fields only. Schema 24/25 stored an extra `size:u32` + `weight:u32`;
-open from those versions strips them. Block size and weight are not stored
-here. A reader sums the header's `txstat` rows (`80 + compactsize(n) + Σ size`,
-weight `4 * (80 + compactsize(n)) + Σ weight`).
+Consensus fields, then the Bitcoin Knots v2 header extension (schema 27).
+Schema 26 rows were the first 88 bytes; open widens them with a zero tail.
+Schema 24/25 stored an extra `size:u32` + `weight:u32` after the 88; open
+from those versions strips them first. Block size and weight are not stored
+here. A reader sums the header's `txstat` rows (`hdr + compactsize(n) + Σ size`,
+weight `4 * (hdr + compactsize(n)) + Σ weight`, where `hdr` is 80, or 164 for
+a v2 header).
 
-| Field | Type |
-|-------|------|
-| prev_fk | u64 |
-| version | i32 |
-| timestamp | u32 |
-| bits | u32 |
-| nonce | u32 |
-| merkle_root | [u8; 32] |
-| hash | [u8; 32] |
+| Field | Type | Notes |
+|-------|------|-------|
+| prev_fk | u64 | |
+| version | u32 | wire version: bit 31 set ⇒ the row is a v2 header and the tail is live |
+| timestamp | u32 | consensus time (v2: wire time + `time_offset` when flags bit 2 is set) |
+| bits | u32 | |
+| nonce | u32 | |
+| merkle_root | [u8; 32] | |
+| hash | [u8; 32] | SHA256d, or the Knots BLAKE2b hash for a v2 row |
+| nonce2 | u32 | v2 tail starts here (84 bytes, wire order, zeros when bit 31 is clear) |
+| nonce3 | u32 | |
+| extranonce | [u8; 16] | |
+| time_offset | u32 | |
+| tx_count | u16 | |
+| flags | u8 | |
+| xor_key_mask_clear_bits | u8 | |
+| xor_key | [u8; 16] | |
+| height | i32 | |
+| mm_rhs | [u8; 32] | |
+
+The parent-edge check (`ensure`) and the integrity walk recompute `hash` from
+the row through `bitcoin::block::Header::block_hash`, so a v2 row is checked
+with the v2 hash.
 
 ### `header.head`
 

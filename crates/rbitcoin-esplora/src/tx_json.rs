@@ -616,6 +616,7 @@ mod tests {
                 hash,
                 size: 0,
                 weight: 0,
+                v2: None,
             };
             let mut txid = [0u8; 32];
             txid[0..4].copy_from_slice(&h.to_le_bytes());
@@ -744,6 +745,7 @@ mod tests {
             hash: merkle0,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut create_txid = [0u8; 32];
         create_txid[31] = 0xcb;
@@ -781,6 +783,7 @@ mod tests {
             hash: hash1,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut spend1_txid = [0u8; 32];
         spend1_txid[0] = 0x11;
@@ -819,6 +822,7 @@ mod tests {
             hash: hash2,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut spend2_txid = [0u8; 32];
         spend2_txid[0] = 0x22;
@@ -880,6 +884,7 @@ mod tests {
             hash: merkle,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut txid = [0u8; 32];
         txid[31] = 0xcb;
@@ -921,6 +926,7 @@ mod tests {
             hash: h1_hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let spend = TxApply {
             tx: TxRecord {

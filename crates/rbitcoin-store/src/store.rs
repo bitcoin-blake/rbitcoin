@@ -1772,6 +1772,9 @@ fn open_layout_refuse_old(path: &Path, meta_ver: u16) -> Result<(), StoreError> 
     if (24..=25).contains(&meta_ver) {
         HeaderTable::rewrite_v24_body_to_88(path)?;
     }
+    if (24..=26).contains(&meta_ver) {
+        HeaderTable::rewrite_v26_body_to_172(path)?;
+    }
     unlink_leftover_spent_off(path)?;
     if class_a_has_creates(path) && txout_meta_lacks_layout17(path) {
         return Err(StoreError::Corrupt(
@@ -1987,6 +1990,7 @@ mod tests {
                 hash,
                 size: 0,
                 weight: 0,
+                v2: None,
             };
             s.put_header(&hdr).unwrap();
             s.flush().unwrap();
@@ -2184,6 +2188,7 @@ mod tests {
             hash: [2u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         let hfk = s.put_header(&hdr).unwrap();
         // Two txs: coinbase + one non-cb (contiguous Class A ids).
@@ -2283,6 +2288,7 @@ mod tests {
             hash: [4u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         let hfk = s.put_header(&hdr).unwrap();
         assert_eq!(s.get_header(hfk).unwrap().hash, [4u8; 32]);
@@ -2579,7 +2585,7 @@ mod tests {
             "schema 22 open must keep create.loc"
         );
         assert_eq!(read_store_meta_ver(&dir), SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 26);
+        assert_eq!(SCHEMA_VERSION, 27);
         let s = Store::open_tiny(&dir).unwrap();
         drop(s);
         assert_eq!(read_store_meta_ver(&dir), SCHEMA_VERSION);
@@ -2724,7 +2730,7 @@ mod tests {
         let s = Store::open_tiny(&dir).unwrap();
         drop(s);
         assert_eq!(read_store_meta_ver(&dir), SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 26);
+        assert_eq!(SCHEMA_VERSION, 27);
         assert!(
             !dir.join("spent.off").exists(),
             "empty 21 open must unlink leftover spent.off"

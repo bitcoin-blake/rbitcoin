@@ -39,12 +39,11 @@ pub use sp_tweaks::{ThinTweakRangeLimits, ThinTweakRow};
 pub use tx_precompute::{decode_block_precomputes, pres_for_tip, TxPrecompute};
 
 use bitcoin::absolute::LockTime;
-use bitcoin::block::{Header as BlockHeader, Version as BlockVersion};
+use bitcoin::block::Header as BlockHeader;
 use bitcoin::hashes::Hash;
 use bitcoin::transaction::Version as TxVersion;
 use bitcoin::{
-    Amount, Block, BlockHash, CompactTarget, OutPoint, ScriptBuf, Sequence, Transaction, TxIn,
-    TxMerkleNode, TxOut, Witness,
+    Amount, Block, BlockHash, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use rbitcoin_primitives::{Fk, Height};
 use rbitcoin_store::{
@@ -2342,15 +2341,7 @@ impl Query {
 }
 
 fn wire_header(rec: &HeaderRecord, prev_blockhash: BlockHash) -> BlockHeader {
-    BlockHeader {
-        version: BlockVersion::from_consensus(rec.version),
-        prev_blockhash,
-        merkle_root: TxMerkleNode::from_byte_array(rec.merkle_root),
-        time: rec.timestamp,
-        bits: CompactTarget::from_consensus(rec.bits),
-        nonce: rec.nonce,
-        v2: None,
-    }
+    rec.wire_header(&prev_blockhash.to_byte_array())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

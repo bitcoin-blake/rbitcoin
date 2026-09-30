@@ -1451,6 +1451,7 @@ mod tests {
             hash: [3u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         let ta = coinbase_apply(1);
         let sig = ta.inputs[0].script_sig.clone();
@@ -1774,6 +1775,7 @@ mod tests {
             hash: [9u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         q.confirm_parent_cache()
             .put_header_plan(1, Fk(2), rec, vec![Fk(2)], [0u8; 32]);
@@ -1945,6 +1947,7 @@ mod tests {
                 hash: [1u8; 32],
                 size: 0,
                 weight: 0,
+                v2: None,
             };
             q.connect_block(Height::GENESIS, &ph, &[parent]).unwrap();
             let spent = q.store.txs.spent_range(Fk(1)).expect("spent range");
@@ -1989,6 +1992,7 @@ mod tests {
             hash: [1u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         q.connect_block(Height::GENESIS, &ph, &[parent]).unwrap();
         let spent = q.store.txs.spent_range(Fk(1)).expect("spent range");
@@ -2183,6 +2187,7 @@ mod tests {
             hash: [1u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         q.connect_block(Height::GENESIS, &ph, &[parent]).unwrap();
         let spent = q.store.txs.spent_range(Fk(1)).expect("spent range");
@@ -2222,6 +2227,7 @@ mod tests {
             hash: [2u8; 32],
             size: 0,
             weight: 0,
+            v2: None,
         };
         let hfk = q
             .commit_class_a_only(&header, &[coinbase_apply(1)])

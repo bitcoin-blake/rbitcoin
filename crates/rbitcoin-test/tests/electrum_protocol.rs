@@ -1999,6 +1999,7 @@ async fn electrum_tweaks_subscribe_streams_then_done() {
         hash: hash1,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let ta1 = TxApply {
         tx: TxRecord {
@@ -2031,6 +2032,7 @@ async fn electrum_tweaks_subscribe_streams_then_done() {
         hash: hash2,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let ta2 = TxApply {
         tx: TxRecord {
@@ -2071,6 +2073,7 @@ async fn electrum_tweaks_subscribe_streams_then_done() {
         hash: hash3,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let ta3 = TxApply {
         tx: TxRecord {

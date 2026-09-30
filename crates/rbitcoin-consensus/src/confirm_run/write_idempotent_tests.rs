@@ -689,6 +689,7 @@ fn expected_bits_extending_uses_header_plan_when_period_start_above_tip() {
         hash: hash_first,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let first_fk = q.store().put_header(&first_rec).unwrap();
     q.confirm_parent_cache().put_header_plan(

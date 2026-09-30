@@ -25,11 +25,12 @@ pub struct StampedTxstatBlock {
 }
 
 fn block_size_weight_from_txstat(
+    header_size: u64,
     rows: &[rbitcoin_store::TxStatRow],
 ) -> Result<(u32, u32), StoreError> {
     let n = rows.len() as u64;
     let vi = bitcoin::consensus::encode::VarInt(n).size() as u64;
-    let overhead = 80u64.saturating_add(vi);
+    let overhead = header_size.saturating_add(vi);
     let mut tx_size = 0u64;
     let mut tx_wu = 0u64;
     for row in rows {
@@ -433,7 +434,10 @@ impl Query {
         if let Ok(rows) = self.store.txstat_range(header_fk, first.0, last) {
             if rows.len() == n as usize && rows.iter().all(|row| row.is_some()) {
                 let plain: Vec<_> = rows.into_iter().flatten().collect();
-                return Ok(Some(block_size_weight_from_txstat(&plain)?));
+                return Ok(Some(block_size_weight_from_txstat(
+                    rec.header_size(),
+                    &plain,
+                )?));
             }
         }
         let Some(tx_fks) = self.store.header_txs.get_list(header_fk)? else {

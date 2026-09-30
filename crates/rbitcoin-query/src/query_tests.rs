@@ -201,6 +201,7 @@ fn coinbase_block(h: u32, prev: Fk, parent_hash: Option<[u8; 32]>) -> (HeaderRec
         hash,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut txid = [0u8; 32];
     txid[0..4].copy_from_slice(&h.to_le_bytes());
@@ -285,6 +286,7 @@ fn spend_op_true(
         hash: hash1,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let spend = TxApply {
         tx: TxRecord {
@@ -793,6 +795,7 @@ fn sh_pending_join_holds_while_job_is_in_flight() {
         hash: hash1,
         size: 0,
         weight: 0,
+        v2: None,
     };
     q.commit_class_a_only(
         &h1,

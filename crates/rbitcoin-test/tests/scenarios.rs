@@ -770,6 +770,7 @@ fn pin_disconnect_to_genesis_reconnect_and_tip_shrink(
                 hash: [1; 32],
                 size: 0,
                 weight: 0,
+                v2: None,
             },
             &[]
         )
@@ -972,6 +973,7 @@ fn pin_megakey_block_disconnect(q: &Query, tip: Height, tip_hash: [u8; 32]) {
         hash: rbitcoin_store::block_header_hash(1, &tip_hash, &merkle, h, 1, 7),
         size: 0,
         weight: 0,
+        v2: None,
     };
     let fk = q.connect_block(Height(h), &header, &txs).unwrap();
     q.put_sp_tweaks_block(Height(h), fk, &vec![None; txs.len()])
@@ -1105,6 +1107,7 @@ fn chain_connect_reorg_and_growth() {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let ta = TxApply {
             tx: TxRecord {

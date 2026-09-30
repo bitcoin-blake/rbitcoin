@@ -317,6 +317,7 @@ fn restatus_notes_scans_intermediate_tick_heights() {
         hash: merkle,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut txid0 = [0u8; 32];
     txid0[0] = 0xa0;
@@ -352,6 +353,7 @@ fn restatus_notes_scans_intermediate_tick_heights() {
         hash: hash1,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut txid1 = [0u8; 32];
     txid1[0] = 0xa1;
@@ -713,6 +715,7 @@ fn get_history_height_window_and_status_full() {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut txid = [0u8; 32];
         txid[0..4].copy_from_slice(&h.to_le_bytes());
@@ -841,6 +844,7 @@ async fn chain_view_reorg_notifies_dropped_scripthash() {
         hash,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut txid = [0u8; 32];
     txid[31] = 0xcb;
@@ -908,6 +912,7 @@ async fn chain_view_reorg_notifies_dropped_scripthash() {
         hash: hash_b,
         size: 0,
         weight: 0,
+        v2: None,
     };
     let mut txid_b = [0u8; 32];
     txid_b[0] = 0x99;
@@ -1062,6 +1067,7 @@ async fn tweaks_subscribe_zero_chunk_dones_after_wave0_then_resubscribe() {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut txid = [0u8; 32];
         txid[0..4].copy_from_slice(&h.to_le_bytes());
@@ -1173,6 +1179,7 @@ async fn tweaks_subscribe_pre_taproot_collapses_empty_heights() {
             hash,
             size: 0,
             weight: 0,
+            v2: None,
         };
         let mut txid = [0u8; 32];
         txid[0..4].copy_from_slice(&h.to_le_bytes());

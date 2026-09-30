@@ -47,6 +47,7 @@ fn connect_op_true(q: &Query, height: u32, prev: Fk, parent: [u8; 32]) -> [u8; 3
         hash,
         size: 0,
         weight: 0,
+        v2: None,
     };
     q.connect_block(Height(height), &hdr, &[op_true_apply(height as u8)])
         .unwrap();
@@ -66,6 +67,7 @@ fn class_a_op_true(q: &Query, height: u32, prev: Fk, parent: [u8; 32]) -> [u8; 3
         hash,
         size: 0,
         weight: 0,
+        v2: None,
     };
     q.commit_class_a_only(&hdr, &[op_true_apply(height as u8)])
         .unwrap();

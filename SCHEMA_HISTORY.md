@@ -13,7 +13,8 @@ Versions below are listed **newest → oldest** after the summary table.
 
 | Version | Headline change | Still in current tree as… |
 |--------:|-----------------|---------------------------|
-| **26** | `header.body` 88 B. Occupied 24/25 strips trailing `size`/`weight`. Block size and weight come from `txstat`. | **Current** |
+| **27** | `header.body` 172 B: the 88 consensus bytes plus the Bitcoin Knots v2 header tail (bit 31 of `version` marks a v2 row). Occupied 26 widens rows with a zero tail. | **Current** |
+| **26** | `header.body` 88 B. Occupied 24/25 strips trailing `size`/`weight`. Block size and weight come from `txstat`. | Prior |
 | **25** | `txstat.body` three ULEBs (`fee_sat`/`base`/`wit_extra`); `n_in` and parent edges on `input.*`. `seqsigwit` is the old `inwit` stem. Occupied 24 zero-extends `txstat`; no `txout` rewrite. | Prior |
 | **24** | `header.body` 96 B (`size`/`weight` u32). Occupied 23 rewrites 88 B rows. Extent last-page reserved = create count. | Prior |
 | **23** | `create.loc.ovf` 16 B (u32 strides / `n_out`). Occupied 22 rewrites 12 B ovf. Occupied 15–21 Class A refused. | Prior |
@@ -39,6 +40,14 @@ Versions below are listed **newest → oldest** after the summary table.
 | **≤3** | Early mmap store; fat heads; mixed prev encoding | Mostly gone |
 
 ---
+
+## v26 (header row 88 B, consensus fields only)
+
+`header.body` rows are the seven consensus fields (`prev_fk`, `version`,
+`timestamp`, `bits`, `nonce`, `merkle_root`, `hash`); the 24/25 `size` /
+`weight` columns are gone and a reader sums `txstat` instead. Occupied 24/25
+rewrote 96 B rows to 88 B on open. Superseded by 27, which keeps the same
+first 88 bytes and appends the 84-byte Knots v2 header tail.
 
 ## v25 (`txstat.body` 8 B/create, `input.*`, `seqsigwit`)
 
