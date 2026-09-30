@@ -967,7 +967,7 @@ async fn block_height(State(st): State<AppState>, Path(height): Path<u32>) -> Re
     }
 }
 
-/// `GET /block/:hash/header` → 80-byte header hex.
+/// `GET /block/:hash/header` → wire header hex (80 bytes, or 164 for a Knots v2 header).
 async fn block_header(State(st): State<AppState>, Path(hash_hex): Path<String>) -> Response {
     let Ok(hash) = parse_hash32(&hash_hex) else {
         return not_found();
@@ -1127,7 +1127,7 @@ pub(crate) fn mempool_wire(st: &AppState, txid: &[u8; 32]) -> Option<bitcoin::Tr
 }
 
 fn encode_header_hex(hdr: &bitcoin::block::Header) -> Result<String, String> {
-    let mut buf = Vec::with_capacity(80);
+    let mut buf = Vec::with_capacity(hdr.size());
     hdr.consensus_encode(&mut buf)
         .map_err(|_| "header encode".to_string())?;
     Ok(rbitcoin_primitives::hex_encode(buf))

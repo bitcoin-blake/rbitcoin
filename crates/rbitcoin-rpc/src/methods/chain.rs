@@ -201,7 +201,8 @@ pub(crate) fn getblockheader(ctx: &RpcContext, params: &RpcParams) -> Result<Val
     } else {
         String::new()
     };
-    Ok(json!({
+    let n_tx = ctx.query.block_tx_fks(height).map(|v| v.len()).unwrap_or(0);
+    let mut obj = json!({
         "hash": hash_hex_display(&rec.hash),
         "confirmations": confirmations(ctx, height),
         "height": height.0,
@@ -216,8 +217,38 @@ pub(crate) fn getblockheader(ctx: &RpcContext, params: &RpcParams) -> Result<Val
         "difficulty": difficulty_from_bits(rec.bits),
         "chainwork": chainwork_hex(ctx, Some(height)),
         "previousblockhash": prev,
-        "nTx": ctx.query.block_tx_fks(height).map(|v| v.len()).unwrap_or(0),
-    }))
+        "nTx": n_tx,
+        "txcount": n_tx,
+    });
+    push_header_v2_json(&mut obj, rec.v2);
+    Ok(obj)
+}
+
+/// Knots `blockheaderToJSON`: `header_version` (2 or 0) and, for a v2 header,
+/// its extension. `nonce2`/`nonce3` are LE hex (`HeaderFieldHex`); the 16- and
+/// 32-byte fields are hex in wire order (`HexStr`).
+pub(crate) fn push_header_v2_json(obj: &mut Value, v2: Option<bitcoin::block::HeaderV2>) {
+    let Some(map) = obj.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "header_version".into(),
+        json!(if v2.is_some() { 2 } else { 0 }),
+    );
+    let Some(v2) = v2 else {
+        return;
+    };
+    map.insert("nonce2".into(), json!(hex_encode(v2.nonce2.to_le_bytes())));
+    map.insert("nonce3".into(), json!(hex_encode(v2.nonce3.to_le_bytes())));
+    map.insert("extranonce".into(), json!(hex_encode(v2.extranonce)));
+    map.insert("time_offset".into(), json!(v2.time_offset));
+    map.insert("header_flags".into(), json!(v2.flags));
+    map.insert(
+        "xor_key_mask_clear_bits".into(),
+        json!(v2.xor_key_mask_clear_bits),
+    );
+    map.insert("xor_key".into(), json!(hex_encode(v2.xor_key)));
+    map.insert("mm_rhs".into(), json!(hex_encode(v2.mm_rhs)));
 }
 
 /// 32-byte BE chainwork hex (regtest = 2 per block). Empty store → 64 zeros.
@@ -380,6 +411,7 @@ pub(crate) fn getblock(ctx: &RpcContext, params: &RpcParams) -> Result<Value, Va
             "nTx": txids.len(),
             "tx": txids,
         });
+        push_header_v2_json(&mut obj, rec.v2);
         enrich_block_header_json(&mut obj, ctx, rec.version, rec.bits, Some(height), None);
         return Ok(obj);
     }
@@ -414,6 +446,7 @@ pub(crate) fn getblock(ctx: &RpcContext, params: &RpcParams) -> Result<Value, Va
         "nTx": block.txdata.len(),
         "tx": txids,
     });
+    push_header_v2_json(&mut obj, block.header.v2);
     enrich_block_header_json(
         &mut obj,
         ctx,
@@ -457,6 +490,7 @@ fn getblock_unknown_hash(ctx: &RpcContext, hash: [u8; 32], verbosity: u32) -> Re
             "nTx": block.txdata.len(),
             "tx": txids,
         });
+        push_header_v2_json(&mut obj, block.header.v2);
         enrich_block_header_json(
             &mut obj,
             ctx,
@@ -940,4 +974,34 @@ pub(crate) fn preciousblock(ctx: &RpcContext, params: &RpcParams) -> Result<Valu
         }
     })?;
     Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod header_v2_json_tests {
+    use super::*;
+
+    #[test]
+    fn knots_keys_for_a_v2_header_and_none_for_a_classic_one() {
+        // Bitcoin Knots `block_header_v2.json`, vector `profile_0_time_offset`.
+        let raw = rbitcoin_primitives::hex_decode("000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab").unwrap();
+        let hdr: bitcoin::block::Header = bitcoin::consensus::deserialize(&raw).unwrap();
+        let mut obj = json!({"hash": "x"});
+        push_header_v2_json(&mut obj, hdr.v2);
+        assert_eq!(obj["header_version"], 2);
+        assert_eq!(obj["nonce2"], "44332211");
+        assert_eq!(obj["nonce3"], "efcdab89");
+        assert_eq!(obj["extranonce"], "ffeeddccbbaa99887766554433221100");
+        assert_eq!(obj["time_offset"], 600);
+        assert_eq!(obj["header_flags"], 28);
+        assert_eq!(obj["xor_key_mask_clear_bits"], 0);
+        assert_eq!(obj["xor_key"], "00000000000000000000000000000000");
+        assert_eq!(
+            obj["mm_rhs"],
+            "8967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab"
+        );
+        let mut classic = json!({"hash": "x"});
+        push_header_v2_json(&mut classic, None);
+        assert_eq!(classic["header_version"], 0);
+        assert!(classic.get("nonce2").is_none());
+    }
 }

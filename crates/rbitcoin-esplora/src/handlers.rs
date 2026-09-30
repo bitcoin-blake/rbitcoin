@@ -79,7 +79,7 @@ pub(crate) fn block_summary_json(
     let difficulty =
         Target::from_compact(CompactTarget::from_consensus(rec.bits)).difficulty_float();
     let mediantime = median_time_past(query, height)?;
-    Ok(json!({
+    let mut obj = json!({
         "id": block_hash_hex(hash),
         "height": height.0,
         "version": rec.version,
@@ -97,7 +97,26 @@ pub(crate) fn block_summary_json(
         "nonce": rec.nonce,
         "bits": rec.bits,
         "difficulty": difficulty,
-    }))
+    });
+    // The Knots v2 extension, as mempool.guide's Esplora presents it.
+    if let (Some(v2), Some(map)) = (rec.v2, obj.as_object_mut()) {
+        map.insert(
+            "header_v2".into(),
+            json!({
+                "nonce2": v2.nonce2,
+                "nonce3": v2.nonce3,
+                "extranonce": rbitcoin_primitives::hex_encode(v2.extranonce),
+                "time_offset": v2.time_offset,
+                "txcount": v2.tx_count,
+                "flags": v2.flags,
+                "xor_key": rbitcoin_primitives::hex_encode(v2.xor_key),
+                "xor_key_mask_clear_bits": v2.xor_key_mask_clear_bits,
+                "height": v2.height,
+                "mm_rhs": rbitcoin_primitives::hex_encode(v2.mm_rhs),
+            }),
+        );
+    }
+    Ok(obj)
 }
 
 /// Median timestamp of the last up to 11 best-chain headers ending at `height` (BIP113 MTP).
@@ -2040,6 +2059,76 @@ mod pure_helper_tests {
             summary["size"].as_u64().unwrap().saturating_mul(4),
             "witness block weight is not 4×stripped size"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A v2 header row at height 1: the summary carries `header_v2` in
+    /// mempool.guide's shape and `/block/:hash/header` would be 164 bytes.
+    #[test]
+    fn block_summary_carries_the_v2_header() {
+        let (dir, q) = temp_query();
+        let genesis = seed_genesis(&q);
+        let (gfk, _) = q.header_at_height(Height(0)).unwrap().unwrap();
+        let raw = rbitcoin_primitives::hex_decode("000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab").unwrap();
+        let knots: bitcoin::block::Header = bitcoin::consensus::deserialize(&raw).unwrap();
+        let mut ext = knots.v2.unwrap();
+        ext.height = 1;
+        ext.tx_count = 1;
+        let mut rec = HeaderRecord {
+            prev_fk: gfk,
+            version: knots.version.to_consensus(),
+            timestamp: knots.time,
+            bits: 0x207f_ffff,
+            nonce: knots.nonce,
+            merkle_root: [0xcd; 32],
+            hash: [0u8; 32],
+            size: 0,
+            weight: 0,
+            v2: Some(ext),
+        };
+        rec.hash = rec.block_hash(&genesis);
+        let ta = TxApply {
+            tx: TxRecord {
+                txid: [0xce; 32],
+                version: 1,
+                locktime: 0,
+                input_start_fk: Fk::NULL,
+                input_count: 1,
+                output_start_fk: Fk::NULL,
+                output_count: 1,
+            },
+            inputs: vec![InputRecord {
+                prev_txid: [0u8; 32],
+                create_fk: Fk::NULL,
+                prev_index: u32::MAX,
+                sequence: u32::MAX,
+                script_sig: vec![0x51],
+                witness: vec![vec![0u8; 32]],
+            }],
+            outputs: vec![OutputRecord::unspent(50_0000_0000, vec![0x51])],
+        };
+        q.connect_block(Height(1), &rec, &[ta]).unwrap();
+        let summary = block_summary_json(&q, &rec.hash).expect("summary");
+        assert_eq!(summary["height"], 1);
+        assert_eq!(summary["version"], knots.version.to_consensus());
+        assert_eq!(
+            summary["timestamp"], knots.time,
+            "consensus time, not wire time"
+        );
+        let v2 = &summary["header_v2"];
+        assert_eq!(v2["nonce2"], ext.nonce2);
+        assert_eq!(v2["nonce3"], ext.nonce3);
+        assert_eq!(v2["extranonce"], "ffeeddccbbaa99887766554433221100");
+        assert_eq!(v2["time_offset"], 600);
+        assert_eq!(v2["txcount"], 1);
+        assert_eq!(v2["flags"], 28);
+        assert_eq!(v2["height"], 1);
+        assert_eq!(v2["xor_key"], "00000000000000000000000000000000");
+        let wire = q.wire_header_at_height(Height(1)).unwrap();
+        assert_eq!(wire.v2, Some(ext));
+        assert_eq!(bitcoin::consensus::serialize(&wire).len(), 164);
+        let classic = block_summary_json(&q, &genesis).unwrap();
+        assert!(classic.get("header_v2").is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -18,6 +18,13 @@ Added
   leaf or witness versions, and output scripts of at most 34 bytes (83 for
   `OP_RETURN`); inputs that spend pre-fork outputs are exempt, as in Knots.
   Relay policy does not yet opt in.
+- **v2 headers on every surface.** Electrum (`blockchain.headers.subscribe`,
+  `block.header`, `block.headers`), Esplora (`/block/:hash/header`), REST and
+  `getblockheader false` serve the 164-byte header for a v2 block.
+  `getblockheader` / `getblock` carry Knots' `header_version`, `txcount`,
+  `nonce2`, `nonce3`, `extranonce`, `time_offset`, `header_flags`,
+  `xor_key_mask_clear_bits`, `xor_key` and `mm_rhs`; Esplora's block JSON
+  carries mempool.guide's `header_v2` object.
 - **Bitcoin Knots v2 block header.** `bitcoin` comes from
   bitcoin-blake/rust-bitcoin (`v2-header`): a header with version bit 31
   carries the 84-byte Knots extension and hashes with the BLAKE2b
